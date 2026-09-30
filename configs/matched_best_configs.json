@@ -1,0 +1,23 @@
+{
+  "muon": {
+    "config": {
+      "lr": 0.0181771645661641,
+      "scalar_lr_mult": 0.49061509693684174,
+      "weight_decay": 0.005835070036773646
+    },
+    "config_id": "shared-04",
+    "trial": 4,
+    "discovery_val_loss": 5.481521248817444
+  },
+  "orbit": {
+    "config": {
+      "lr": 0.0181771645661641,
+      "scalar_lr_mult": 0.49061509693684174,
+      "weight_decay": 0.005835070036773646
+    },
+    "config_id": "shared-04",
+    "trial": 4,
+    "discovery_val_loss": 5.475895619392395
+  },
+  "note": "Muon and ORBIT independently selected the same candidate from the shared 10-candidate grid before held-out evaluation."
+}
