@@ -138,7 +138,7 @@ This validates the exact expected seed/config structure before producing paper-l
 
 ## Regenerate figures and PDF
 
-For a full PDF build, install a TeX distribution with `latexmk`, `texlive-latex-extra`, `texlive-fonts-recommended`, and `texlive-science`.
+For a full PDF build, install a TeX distribution with `latexmk`, `texlive-latex-extra`, `texlive-fonts-recommended`, `texlive-fonts-extra`, and `texlive-science`.
 
 From a completed campaign:
 
