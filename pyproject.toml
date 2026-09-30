@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbit-optimizer"
+version = "0.1.0"
+description = "ORBIT: function-space optimization for rotary query-key interactions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Alexandru Pop"}]
+dependencies = ["torch>=2.2"]
+
+[project.optional-dependencies]
+experiments = [
+  "transformers>=4.56,<5",
+  "datasets>=3,<5",
+  "numpy>=1.26",
+  "matplotlib>=3.8",
+]
+dev = ["pytest>=8", "ruff>=0.4"]
+
+[project.urls]
+Repository = "https://github.com/pop123-ux/ORBIT"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
