@@ -144,10 +144,10 @@ python scripts/orbit_build_paper.py \
 The compiled manuscript is written to:
 
 ```text
-docs/orbit/paper/main.pdf
+docs/paper/main.pdf
 ```
 
-When using this standalone repository, the manuscript source itself lives in `docs/paper/`; the original script path is retained for exact campaign provenance.
+The manuscript source and generated PDF live in `docs/paper/`.
 
 ## Frozen evidence
 
