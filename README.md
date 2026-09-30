@@ -10,7 +10,7 @@ ORBIT is a research optimizer for RoPE-based Transformer language models. It kee
 
 > **Core idea:** optimize Q/K in a geometry induced by rotary attention, not only by matrix shape.
 
-[Paper source](docs/paper/main.tex) · [Method](docs/METHOD.md) · [Reproduction guide](docs/REPRODUCE.md) · [Paper results](results/paper-v1/results.json)
+[Paper source](docs/paper/main.tex) · [Method](docs/METHOD.md) · [Implementation map](docs/ARCHITECTURE.md) · [Reproduction](docs/REPRODUCE.md) · [Results](results/paper-v1/results.json)
 
 ---
 
