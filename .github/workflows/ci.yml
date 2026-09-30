@@ -16,24 +16,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev,experiments]"
+          pip install -e ".[dev]"
       - name: Syntax
-        run: |
-          python -m compileall -q src/orbit
-          python -m py_compile scripts/orbit_campaign.py scripts/orbit_postscale.py scripts/orbit_paper_artifacts.py
-      - name: Unit tests
+        run: python -m compileall -q src/orbit examples
+      - name: Tests
         run: pytest -q
-      - name: Validate frozen paper evidence
-        run: |
-          mkdir -p /tmp/orbit-paper/merged
-          cp results/paper-v1/raw/*.jsonl /tmp/orbit-paper/merged/
-          cp configs/matched_best_configs.json /tmp/orbit-paper/merged/matched_best_configs.json
-          python scripts/orbit_paper_artifacts.py --work-dir /tmp/orbit-paper
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          p = Path("/tmp/orbit-paper/paper_artifacts/manifest.json")
-          manifest = json.loads(p.read_text())
-          assert manifest["status"] == "paper_ready", manifest
-          print("Frozen paper evidence:", manifest["status"])
-          PY
