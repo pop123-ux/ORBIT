@@ -1,6 +1,7 @@
 \documentclass[10pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,booktabs,graphicx,microtype,hyperref}
+\usepackage{fontawesome5}
 \usepackage[ruled,vlined,linesnumbered]{algorithm2e}
 \usepackage{placeins}
 \usepackage{needspace}
@@ -10,7 +11,7 @@
 \graphicspath{{figures/}}
 
 \title{ORBIT: Function-Space Optimization for Rotary Query--Key Interactions}
-\author{Alexandru Pop\\[-0.1em]\small Independent Researcher\\[-0.1em]\small \href{mailto:alexandrupp55@gmail.com}{alexandrupp55@gmail.com}\;\textbar\;\href{https://github.com/pop123-ux}{github.com/pop123-ux}\\[-0.1em]\small \textbf{Code:} \href{https://github.com/pop123-ux/ORBIT}{github.com/pop123-ux/ORBIT}}
+\author{Alexandru Pop\\[-0.1em]\small Independent Researcher\\[-0.1em]\small \href{mailto:alexandrupp55@gmail.com}{alexandrupp55@gmail.com}\\[-0.15em]\small \href{https://github.com/pop123-ux}{\faGithub}}
 \date{}
 
 \hypersetup{
@@ -27,7 +28,7 @@
 
 \begin{abstract}
 Matrix optimizers such as Muon exploit the spectral structure of parameter matrices while
-treating query and key projections as ordinary matrix parameters. ORBIT introduces a
+treating query and key projections as ordinary matrix parameters. ORBIT\,\href{https://github.com/pop123-ux/ORBIT}{\faGithub}\ introduces a
 function-space extension of Muon for rotary attention: frequency-local $2\times2$ metrics
 are constructed from query/key covariances transported through RoPE relative-position
 rotations, applied to the candidate Q/K updates, and followed by joint Frobenius-norm
