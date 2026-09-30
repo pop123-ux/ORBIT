@@ -1,0 +1,328 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,graphicx,microtype,hyperref}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{placeins}
+\usepackage{needspace}
+\usepackage{tabularx}
+\usepackage{siunitx}
+\usepackage{xcolor}
+\graphicspath{{figures/}}
+
+\title{ORBIT: Function-Space Optimization for Rotary Query--Key Interactions}
+\author{Alexandru Pop\\[-0.1em]\small Independent Researcher\\[-0.1em]\small \href{mailto:alexandrupp55@gmail.com}{alexandrupp55@gmail.com}}
+\date{}
+
+\hypersetup{
+  pdftitle={ORBIT: Function-Space Optimization for Rotary Query--Key Interactions},
+  pdfauthor={Alexandru Pop},
+  pdfsubject={RoPE-aware query--key optimization for language-model training},
+  pdfkeywords={ORBIT, Muon, RoPE, optimization, attention, language models}
+}
+
+\IfFileExists{generated/macros.tex}{\input{generated/macros.tex}}{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Matrix optimizers such as Muon exploit the spectral structure of parameter matrices while
+treating query and key projections as ordinary matrix parameters. ORBIT introduces a
+function-space extension of Muon for rotary attention: frequency-local $2\times2$ metrics
+are constructed from query/key covariances transported through RoPE relative-position
+rotations, applied to the candidate Q/K updates, and followed by joint Frobenius-norm
+restoration. On RoPE-modified GPT-2-style decoders trained on FineWeb-Edu, the evaluation
+separates optimizer mechanism from hyperparameter recipe. Under an identical configuration
+selected independently by both methods from the same ten-candidate grid, ORBIT lowers
+validation loss on \MatchedWins{} held-out seeds, with a paired mean difference of
+\MatchedDelta{} nats (95\% CI [\MatchedCILow{}, \MatchedCIHigh{}]). Mean training
+runtime increases by \MatchedRuntimeOverhead{}, with essentially unchanged peak allocated
+memory. Cross-configuration experiments show an ORBIT improvement under both frozen
+recipes while revealing substantial sensitivity to recipe choice. Expanded ablations
+identify contributions from functional Q/K conditioning and RoPE-aware rotation.
+Longer-horizon and 355M experiments further show transfer beyond the primary setting
+against Muon and NorMuon in the tested seeds. ORBIT changes no inference-time computation.
+\end{abstract}
+
+\section{Introduction}
+Matrix optimizers have become a practical alternative to coordinate-wise adaptive methods
+for Transformer training. Muon, for example, applies momentum followed by approximate
+matrix orthogonalization to hidden two-dimensional parameters, and its scaled variants have
+shown that spectral update geometry can remain effective at large language-model
+scale~\cite{jordan2024muon,liu2025muon}. Yet this treatment is largely parameter-centric:
+two matrices with the same shape receive the same class of update even when they participate
+in qualitatively different computations.
+
+Self-attention provides a particularly sharp example. Query and key projections jointly
+determine pre-softmax attention scores, and RoPE rotates two-dimensional Q/K coordinate
+pairs so that their interaction depends on relative position~\cite{su2021roformer}. For a
+frequency pair $f$, the relevant score contribution is
+$q_{i,f}^{\top}R_f(i-j)k_{j,f}$. Consequently, an equal-sized perturbation of $W_Q$ or
+$W_K$ can induce very different functional movement depending on the opposite circuit's
+statistics and on the RoPE rotation associated with token displacement. Standard Muon does
+not model this interaction.
+
+ORBIT incorporates that functional geometry without replacing Muon's efficient spectral
+update or changing inference. It first forms the ordinary
+Muon-style candidate Q/K directions, then preconditions each RoPE frequency pair with a
+compact metric derived from the covariance of the opposite circuit after transport through a
+fixed distribution of relative-position rotations. A single joint Frobenius restoration
+prevents this conditioning from winning merely by increasing the total Q/K step norm. The
+result is an optimizer-only modification whose unique operations are local $2\times2$
+matrix functions.
+
+Optimizer comparisons are unusually sensitive to tuning policy, making experimental design
+part of the contribution. The evaluation first crosses the frozen Muon and ORBIT recipes,
+then presents both methods with the same candidate set and evaluates their independently
+selected winner on unseen paired seeds. This mechanism-isolated comparison anchors the
+subsequent ablations and longer-horizon/model-scale transfer experiments.
+
+\Needspace{9\baselineskip}
+\paragraph{Contributions.}
+The main contributions are:
+\textbf{(1) RoPE-conditioned Q/K geometry}, a frequency-local functional metric derived
+from the relative-position attention interaction;
+\textbf{(2) matched optimizer evaluation}, separating the ORBIT update from recipe
+selection across unseen seeds;
+\textbf{(3) mechanism ablations}, isolating functional conditioning, RoPE-aware rotation,
+and full frequency-pair coupling; and
+\textbf{(4) transfer evidence}, extending the evaluation to a longer training horizon and
+a 355M model with measured runtime and memory cost.
+
+\section{Related Work}
+\paragraph{Matrix and spectral optimization.}
+Muon replaces a raw matrix-gradient step with a momentum-smoothed, approximately
+orthogonalized direction~\cite{jordan2024muon}; later work showed that weight decay and
+update-scale calibration make this family viable at substantially larger language-model
+scale~\cite{liu2025muon}. PRISM adds anisotropic spectral shaping to Muon-like first-order
+updates using low-rank curvature information~\cite{yang2026prism}. These methods motivate
+ORBIT's spectral base update, but they do not specialize the metric to the functional role
+of rotary Q/K interactions.
+
+\paragraph{Optimization under architectural geometry.}
+Recent work increasingly argues that optimizers should respect invariances or induced
+weight-space geometry. \emph{Riemannian Gradient Descent for Low-Rank
+Architectures}~\cite{knight2026} treats QK/VO products as low-rank optimization objects.
+\emph{Dead-Direction Conditioners}~\cite{shirodkar2026ddc} develops gauge-equivariant
+conditioners for architectural symmetries, including a per-head attention rotation matched
+to RoPE. \emph{The Loss Does Not See the Basis, but Adam Does}~\cite{singh2026lossbasis}
+shows that optimizer behavior can depend on arbitrary factor bases even when the represented
+function is unchanged, with Q/K products serving as attention invariants. In
+parameter-efficient adaptation, LoRA-TSD and ISO-LoRA optimize the induced tangent-space
+weight update rather than treating low-rank factors independently
+~\cite{andriianov2026loratsd,zhu2026isolora}. ORBIT is complementary: it constructs a local
+training metric directly from the RoPE-conditioned Q/K bilinear function.
+
+\paragraph{Query--key and RoPE structure.}
+\emph{Faster Query-Key Learning Sharpens Attention}~\cite{vashisht2026fasterqk} shows
+that the relative learning speed of QK and OV circuits changes attention concentration,
+reinforcing the distinct functional role of QK optimization. \emph{Spectral Query-Key
+Product Weight Steering}~\cite{tiwari2026qksteering} directly edits singular modes of the
+query--key product as a training-free intervention. RoFormer introduced the rotation
+structure that turns absolute Q/K rotations into relative-position interactions
+~\cite{su2021roformer}; LeRoPE makes those frequencies learnable
+~\cite{karypis2026lerope}; and \emph{RoPE Attention Is an Exact Forward-Pass Gradient Step
+with Softmax Intact}~\cite{huang2026ropegradient} derives an exact gradient-step
+representation of the RoPE-softmax forward pass. These works analyze or modify attention
+geometry, but do not use the relative-position rotation itself to precondition Q/K
+parameter updates during pretraining.
+
+\paragraph{Positioning.}
+The literature audit did not identify prior work introducing a training optimizer whose Q/K
+preconditioner is derived from the RoPE-conditioned relative-position bilinear interaction
+and implemented with per-frequency $2\times2$ statistics. ORBIT's novelty is therefore
+specific to this training-time metric and its mechanism-isolated evaluation, rather than to
+spectral descent, QK-product optimization, architecture-aware optimization, RoPE geometry,
+or gauge-equivariant conditioning.
+
+\input{methods.tex}
+
+\section{Results}
+
+\subsection{Matched hyperparameters isolate a reproducible ORBIT effect}
+The primary comparison removes optimizer-specific recipe selection as a confound. Muon and
+ORBIT were presented with the same ten deterministic 900-step candidate configurations and
+independently selected the same frozen candidate before any held-out confirmation seed was
+evaluated. Under that shared configuration, Muon reached mean validation loss
+\MatchedMuonLoss{} and ORBIT reached \MatchedOrbitLoss{} across ten new paired seeds
+(Table~\ref{tab:matched}).
+
+The paired ORBIT-minus-Muon difference was \MatchedDelta{} nats, with a 95\% confidence
+interval of [\MatchedCILow{}, \MatchedCIHigh{}].
+\textbf{ORBIT obtained the lower validation loss on \MatchedWins{} held-out runs}
+(Figure~\ref{fig:matched}). This matched estimate directly isolates the optimizer contribution from independent recipe
+selection. The improvement therefore persists when both methods share the same
+hyperparameters and is not explained solely by a more favorable ORBIT recipe.
+
+Mean wall-clock time increased by \MatchedRuntimeOverhead{} relative to Muon, while
+recorded peak CUDA allocation changed by only \MatchedMemoryOverhead{}. ORBIT therefore
+achieves the matched loss improvement with essentially unchanged peak allocated memory and
+a measurable training-time overhead.
+
+\IfFileExists{generated/table_matched.tex}{\input{generated/table_matched.tex}}{}
+
+\IfFileExists{figures/matched_effect.pdf}{%
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.78\linewidth]{matched_effect.pdf}
+\caption{Primary matched-hyperparameter result. Circles show paired held-out run
+differences; the diamond shows the paired mean with its 95\% confidence interval. Negative
+values favor ORBIT.}
+\label{fig:matched}
+\end{figure}}{}
+
+\subsection{Hyperparameter recipe accounts for a substantial part of the broad gap}
+The optimizer-by-configuration cross-over makes the tuning confound explicit. When both
+methods use the Muon-selected recipe, ORBIT improves on Muon by
+\XConfigMechanismMuon{} nats and wins \XConfigMechanismMuonWins{} paired seeds. When both
+use the ORBIT-selected recipe, the corresponding mechanism difference is
+\XConfigMechanismOrbit{} nats, again with ORBIT winning
+\XConfigMechanismOrbitWins{} seeds. Thus the ORBIT update improves the objective under both
+recipes, but the size of the gain depends strongly on the surrounding hyperparameters.
+
+Recipe choice itself has a larger effect than the matched mechanism contrast. Moving Muon
+from its own discovery recipe to the ORBIT-selected recipe changes validation loss by
+\XConfigRecipeMuon{} nats, while the analogous change for ORBIT is
+\XConfigRecipeOrbit{} nats. The cross-over shows that the larger independently tuned ORBIT--Muon gap combines both
+update-rule and recipe effects. \textbf{Across both frozen recipes, ORBIT retains the lower
+validation loss on every paired run} (Figure~\ref{fig:mechanism}a).
+
+\subsection{Ablations identify functional Q/K conditioning and RoPE-aware rotation}
+The expanded ten-seed ablation tests which pieces of ORBIT are responsible for the matched
+effect. The \textbf{identity control} removes the functional preconditioner while preserving the
+same matched recipe and ORBIT update path. Full ORBIT improves on this control by
+\AblIdentityDelta{} nats, with 95\% CI
+[\AblIdentityCILow{}, \AblIdentityCIHigh{}], and wins \AblIdentityWins{} seeds. The
+magnitude is close to the independent matched Muon comparison, providing a second
+mechanism-focused estimate on a different seed set.
+
+The \textbf{no-RoPE control}, which retains generic Q/K functional adaptation while
+removing the relative-position rotations, weakens the optimizer further: full ORBIT improves on the no-RoPE control by
+\AblNoRoPEDelta{} nats, with 95\% CI
+[\AblNoRoPECILow{}, \AblNoRoPECIHigh{}], and wins \AblNoRoPEWins{} seeds. This comparison
+supports the claim that relative-position-aware conditioning contributes beyond generic
+Q/K covariance adaptation in the tested architecture.
+
+Full ORBIT also improves on the \textbf{diagonal control} by \AblDiagDelta{} nats, with 95\% CI
+[\AblDiagCILow{}, \AblDiagCIHigh{}], and wins \AblDiagWins{} seeds. This smaller contrast
+indicates an additional contribution from the full frequency-pair metric beyond diagonal
+per-frequency scaling.
+
+\IfFileExists{figures/mechanism_summary.pdf}{%
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.98\linewidth]{mechanism_summary.pdf}
+\caption{Mechanism isolation. \textbf{(a)} Crossed optimizer--recipe experiment: ORBIT
+retains lower loss under both frozen recipes. \textbf{(b)} Paired mechanism ablations with
+95\% confidence intervals; negative values favor full ORBIT.}
+\label{fig:mechanism}
+\end{figure}}{}
+
+\subsection{ORBIT transfers across training horizon and model size}
+The transfer experiments preserve each optimizer's independently frozen recipe and evaluate
+whether the observed advantage extends beyond the primary 124M/900-step setting.
+
+At 124M and 2700 steps, \textbf{ORBIT remains below every comparison recipe in both tested
+runs}.
+Its mean paired differences are \HorizonVsMuon{} nats versus Muon,
+\HorizonVsNorMuon{} versus NorMuon, and \HorizonVsAstro{} versus ASTRO. The two
+ORBIT--ASTRO seed differences are closely aligned in sign and magnitude. The two paired seeds show that the advantage persists over a substantially longer training
+horizon in this transfer setting.
+
+At 355M and 900 steps, \textbf{ORBIT again outperforms the Muon and NorMuon recipes in
+both tested runs}, with mean
+paired differences of \ScaleVsMuon{} and \ScaleVsNorMuon{} nats respectively. The ASTRO
+comparison is mixed across the two seeds: the mean ORBIT-minus-ASTRO difference is
+\ScaleVsAstro{} nats, with one seed favoring each method. The larger model uses a smaller
+batch size and hence a different sampled-token budget per optimizer step; the experiment
+therefore demonstrates transfer to 355M rather than a controlled scaling law.
+
+\IfFileExists{figures/transfer_summary.pdf}{%
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.96\linewidth]{transfer_summary.pdf}
+\caption{Transfer beyond the primary setting. \textbf{(a)} 124M model at 2700 steps.
+\textbf{(b)} 355M model at 900 steps. Points show individual runs; horizontal segments show
+the method mean.}
+\label{fig:transfer}
+\end{figure}}{}
+
+\subsection{Broader optimizer context}
+The independently tuned 124M confirmation provides a practical comparison across the wider
+optimizer set. ASTRO reaches mean validation loss \BroadAstroLoss{}, ORBIT
+\BroadOrbitLoss{}, NorMuon \BroadNorMuonLoss{}, and Muon \BroadMuonLoss{}. ORBIT and ASTRO are numerically close under their independently selected recipes, while
+\textbf{both substantially outperform the original Muon recipe}.
+
+Figure~\ref{fig:broad-context} summarizes the full six-optimizer comparison. The matched
+Muon--ORBIT experiment remains the primary mechanism-isolated estimate; this broader view
+shows where ORBIT sits among the frozen recipes used throughout the campaign.
+
+\IfFileExists{figures/broad_confirmation.pdf}{%
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.62\linewidth]{broad_confirmation.pdf}
+\caption{Broader 124M optimizer context under independently selected recipes. Points show
+mean validation loss across five seeds; error bars show one standard deviation.}
+\label{fig:broad-context}
+\end{figure}}{}
+
+\FloatBarrier
+
+\section{Discussion}
+The experiments support three conclusions. First, the ORBIT improvement persists under a
+strict matched-hyperparameter comparison: validation loss is lower on \MatchedWins{}
+unseen seeds, and the paired confidence interval excludes zero. The cross-configuration
+study complements this result by showing that ORBIT remains lower-loss under both frozen
+recipes while also quantifying the influence of recipe choice on broader optimizer
+comparisons.
+
+Second, the ablations connect the empirical gain to the proposed functional geometry.
+Removing the functional preconditioner produces the largest degradation, removing the RoPE
+rotations produces an additional consistent degradation, and the diagonal approximation
+retains most of the benefit while leaving a smaller advantage for the full $2\times2$
+metric. Together these controls support the central design principle: Q/K updates benefit
+from conditioning that reflects the RoPE-dependent function they induce.
+
+Third, the improvement extends beyond the primary 124M/900-step experiment. At 2700 steps,
+ORBIT attains the lowest validation loss among Muon, NorMuon, ASTRO, and ORBIT in both
+tested seeds. At 355M, ORBIT remains lower than Muon and NorMuon in both tested seeds and is
+competitive with ASTRO. These results position ORBIT as a practical geometry-aware
+extension to Muon-family optimization whose effect is visible under matched hyperparameters
+and persists across additional training regimes.
+
+\paragraph{Scope and future work.}
+The present study evaluates RoPE-modified GPT-2-style decoders with multi-head attention.
+The transfer experiments use two seeds, and the 355M setting uses a smaller batch size than
+the 124M setting. Extending the evaluation to grouped-query attention, QK normalization,
+mixture-of-experts models, larger pretraining budgets, lower-overhead implementations, and
+controlled scaling studies on substantially larger-parameter models is a direct direction
+for future work. We encourage independent replication and extension of these experiments
+across broader architectures and compute regimes, using the accompanying implementation
+and reproducibility artifacts as a basis for further investigation of function-space
+conditioning.
+
+\section{Conclusion}
+ORBIT introduces a training-time function-space preconditioner for rotary query--key
+interactions. By constructing frequency-local metrics from Q/K statistics transported
+through RoPE relative-position rotations, ORBIT adapts Muon's matrix update to the
+computation performed by attention while leaving the model architecture and inference graph
+unchanged.
+
+Under identical hyperparameters selected from the same search grid, ORBIT lowers validation
+loss on \MatchedWins{} unseen seeds with a paired mean difference of \MatchedDelta{} nats
+and a 95\% confidence interval of [\MatchedCILow{}, \MatchedCIHigh{}]. Cross-configuration
+experiments show that the improvement is present under both frozen recipes, and the expanded
+ablations attribute the effect to functional Q/K conditioning, RoPE-aware rotation, and an additional contribution from full frequency-pair coupling. The advantage also
+persists at a longer training horizon and transfers to the 355M setting against Muon and
+NorMuon in the tested seeds.
+
+These results establish ORBIT as a concrete example of computation-aware matrix
+optimization: the update geometry is derived from the function of the parameter block
+rather than from matrix shape alone. The same principle suggests a broader direction for
+optimizers that incorporate architectural function while preserving standard model
+parameters and inference-time computation.
+
+\FloatBarrier
+\bibliographystyle{plain}
+\bibliography{references}
+\end{document}
