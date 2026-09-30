@@ -39,9 +39,9 @@ model = OrbitGPT(
 
 optimizer = Orbit(
     model,
-    lr=0.0181771645661641,
-    adamw_lr=0.008918190039923338,
-    weight_decay=0.005835070036773646,
+    lr=0.02,
+    adamw_lr=3e-4,
+    weight_decay=0.05,
 )
 ```
 
