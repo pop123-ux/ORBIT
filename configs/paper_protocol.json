@@ -1,0 +1,34 @@
+{
+  "paper_snapshot": "paper-v1",
+  "data": {
+    "dataset": "HuggingFaceFW/fineweb-edu sample-10BT",
+    "tokenizer": "GPT-2",
+    "sequence_length": 512,
+    "validation_tokens": 400000,
+    "training_tokens": 12000000
+  },
+  "models": {
+    "124M": {"layers": 12, "heads": 12, "width": 768, "batch_size": 8, "gradient_checkpointing": false},
+    "355M": {"layers": 24, "heads": 16, "width": 1024, "batch_size": 4, "gradient_checkpointing": true}
+  },
+  "schedule": {"warmup_fraction": 0.10, "type": "cosine", "final_lr_multiplier": 0.10, "global_grad_clip": 1.0},
+  "orbit": {
+    "momentum": 0.95,
+    "newton_schulz_steps": 5,
+    "covariance_ema_beta": 0.95,
+    "metric_eps": 1e-5,
+    "metric_condition_cap": 100.0,
+    "relative_position_deltas": [1,2,4,8,16,32,64,128],
+    "joint_qk_frobenius_restore": true,
+    "inference_change": false
+  },
+  "final_experiments": {
+    "broad_confirmation": {"model": "124M", "steps": 900, "seeds": [100,101,102,103,104]},
+    "xconfig": {"model": "124M", "steps": 900, "seeds": [100,101,102,103,104]},
+    "matched_tune": {"model": "124M", "steps": 900, "shared_candidates": 10},
+    "matched_confirmation": {"model": "124M", "steps": 900, "seeds": [500,501,502,503,504,505,506,507,508,509]},
+    "ablation_ext": {"model": "124M", "steps": 900, "seeds": [600,601,602,603,604,605,606,607,608,609]},
+    "horizon_transfer": {"model": "124M", "steps": 2700, "seeds": [400,401]},
+    "scale_transfer": {"model": "355M", "steps": 900, "seeds": [300,301]}
+  }
+}
