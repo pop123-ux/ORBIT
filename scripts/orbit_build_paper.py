@@ -494,7 +494,7 @@ def generate_plots(work_dir: Path, allow_incomplete: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--work-dir", type=Path, required=True)
-    parser.add_argument("--paper-dir", type=Path, default=Path("docs/orbit/paper"))
+    parser.add_argument("--paper-dir", type=Path, default=Path("docs/paper"))
     parser.add_argument("--no-compile", action="store_true")
     parser.add_argument("--skip-plots", action="store_true")
     parser.add_argument("--allow-incomplete", action="store_true")
