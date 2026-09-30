@@ -427,6 +427,15 @@ def sync_figures(work_dir: Path, paper_dir: Path) -> None:
 
 def compile_tex(paper_dir: Path) -> None:
     if shutil.which("latexmk"):
+        # Clear latexmk's cached dependency/error state before every manuscript
+        # build. This matters after a dependency is installed following a failed
+        # compile: latexmk can otherwise report "Nothing to do" while returning
+        # the previous non-zero status.
+        subprocess.run(
+            ["latexmk", "-C", "main.tex"],
+            cwd=paper_dir,
+            check=False,
+        )
         subprocess.run(
             ["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
             cwd=paper_dir,
