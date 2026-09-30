@@ -97,7 +97,7 @@ optimizer = Muon(model, lr=0.0181771645661641)
 ```text
 ORBIT/
 ├── src/orbit/                  # ORBIT optimizer, Muon control, RoPE GPT model
-├── experiments/paper/          # exact campaign/orchestration scripts used for the paper
+├── scripts/                    # exact campaign/orchestration scripts used for the paper
 ├── configs/                    # frozen paper protocol and matched configs
 ├── results/paper-v1/           # frozen paper-level statistics
 ├── docs/                       # method, terminology, reproduction, experiment map
@@ -122,7 +122,7 @@ This checks the closed-form \(2\times2\) inverse metric, RoPE metric constructio
 
 ### 2. Primary matched Muon–ORBIT result
 
-Prepare the 12.4M-token FineWeb-Edu cache described in [docs/REPRODUCE.md](docs/REPRODUCE.md), then run the matched phase from the exact campaign harness in `experiments/paper/`.
+Prepare the 12.4M-token FineWeb-Edu cache described in [docs/REPRODUCE.md](docs/REPRODUCE.md), then run the matched phase from the exact campaign harness in `scripts/`.
 
 The frozen selected configuration is committed in:
 
