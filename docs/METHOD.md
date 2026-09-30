@@ -1,62 +1,81 @@
-# ORBIT-v0 method freeze
+# Method
 
-**Status:** research candidate, not a novelty or performance claim.
+ORBIT modifies only the query/key part of a Muon step.
 
-ORBIT is an optimizer-only extension for rotary attention. It keeps ordinary Q/K/V/O
-weights and changes no inference computation. The first frozen candidate tests one
-specific hypothesis: Q and K should be updated according to the *functional movement
-of RoPE attention logits*, not only according to parameter-space norms.
+For a single attention head and one two-dimensional RoPE frequency pair, the pre-softmax score contribution is
 
-For one head and one two-dimensional RoPE frequency pair, the score contribution is
+[
+s_{ij,f}=q_{i,f}^{	op}R_f(i-j)k_{j,f}.
+]
 
-\[
-s_{ij,f}=q_{i,f}^{\top}R_f(i-j)k_{j,f}.
-\]
+The optimizer tracks exponential-moving-average second moments of the unrotated Q/K pair:
 
-Let `C_q` and `C_k` be EMA 2x2 covariances of the unrotated query/key pair. ORBIT
-forms the local output-space metrics
+[
+C_{Q,f}=mathbb E[q_f q_f^	op],qquad
+C_{K,f}=mathbb E[k_f k_f^	op].
+]
 
-\[
-M_{Q,f}=\mathbb E_{\Delta}[R_f(\Delta)C_{K,f}R_f(\Delta)^\top],\qquad
-M_{K,f}=\mathbb E_{\Delta}[R_f(\Delta)^\top C_{Q,f}R_f(\Delta)].
-\]
+For a set of relative displacements (mathcal D), the local metrics are
 
-The expectation is approximated with a fixed logarithmic relative-position grid
-`{1,2,4,8,16,32,64,128}`. A standard Muon candidate direction is produced first.
-Each two-row Q/K frequency block is then left-preconditioned by
-`M^{-p/2}`. The combined Q+K Frobenius norm is restored afterwards. Thus ORBIT-v0
-cannot win merely by taking a larger aggregate Q/K step.
+[
+M_{Q,f}=rac{1}{|mathcal D|}sum_{Deltainmathcal D}
+R_f(Delta)C_{K,f}R_f(Delta)^	op,
+]
 
-The initial paper candidate uses `p=1` unless an ablation falsifies it. Hyperparameter
-search must **not** give ORBIT more free tuning dimensions than the baselines; the
-functional exponent and relative-position grid are mechanism choices, not hidden
-search knobs.
+[
+M_{K,f}=rac{1}{|mathcal D|}sum_{Deltainmathcal D}
+R_f(Delta)^	op C_{Q,f}R_f(Delta).
+]
 
-## Required falsification controls
+The default displacement set is
 
-- `orbit_identity`: same code/routing but no functional preconditioner; this is the
-  direct Muon-style control.
-- `orbit_norope`: use Q/K covariances but remove the relative-position rotations.
-- `orbit_diag`: retain per-frequency sensitivity but remove off-diagonal 2x2 phase
-  coupling.
-- tuned AdamW, Muon, NorMuon and faithful AdaMuon reference from the inherited
-  paper campaign.
+[
+mathcal D={1,2,4,8,16,32,64,128}.
+]
 
-## Kill criteria
+Muon first produces the candidate matrix updates (U_Q) and (U_K). ORBIT reshapes them into RoPE pairs and applies
 
-Do not promote ORBIT to the expensive campaign unless all are true:
+[
+widehat U_Q=M_Q^{-1/2}U_Q,qquad
+widehat U_K=M_K^{-1/2}U_K.
+]
 
-1. no NaN/Inf failures in the smoke and 124M discovery runs;
-2. median discovery loss is not worse than tuned Muon at comparable runtime;
-3. at least one genuine ORBIT mechanism (`orbit` vs `identity/norope/diag`) has a
-   repeatable effect larger than run-to-run noise;
-4. held-out seeds retain the direction of the discovery result;
-5. overhead is plausibly production-compatible (target <15% wall-clock vs Muon);
-6. the exact frozen equation survives a final prior-art audit before paper claims.
+The final step uses one shared restoration factor
 
-## Production path
+[
+ho=
+sqrt{
+rac{|U_Q|_F^2+|U_K|_F^2}
+{|widehat U_Q|_F^2+|widehat U_K|_F^2}
+},
+]
 
-The research model is GPT-2-sized but uses RoPE because the proposed geometry is
-undefined for learned absolute position embeddings. The optimizer keeps standard
-weights, so there is zero inference overhead. After 124M confirmation, the required
-transfer target is a modern RoPE decoder with GQA; QK-norm support is a later gate.
+so that
+
+[
+widetilde U_Q=howidehat U_Q,qquad
+widetilde U_K=howidehat U_K.
+]
+
+This keeps the combined Q/K update norm fixed. The preconditioner changes the direction and allocation of the step rather than increasing its total magnitude.
+
+## Numerical details
+
+The local metrics are symmetric 2x2 matrices. `inverse_metric_power` computes the inverse metric power from the closed-form spectrum, adds a small diagonal regularizer, caps the effective condition number, and falls back to the identity for non-finite auxiliary statistics.
+
+Default values:
+
+```text
+momentum              0.95
+Newton-Schulz steps   5
+Q/K covariance EMA    0.95
+metric epsilon        1e-5
+condition cap         100
+functional power      1.0
+```
+
+## Parameter routing
+
+Q/K matrices use the Muon candidate followed by ORBIT preconditioning. Other hidden two-dimensional matrices use the same Muon candidate without ORBIT. Token embeddings and the tied LM head use the auxiliary AdamW path with decay; vectors, biases, and normalization parameters use AdamW without decay.
+
+The covariance buffers are training-only. No ORBIT state is needed for inference.

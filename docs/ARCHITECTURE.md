@@ -1,85 +1,40 @@
-# Implementation map
+# Implementation notes
 
-This document maps the paper equations to the public implementation.
+The public implementation is intentionally small. The optimizer-specific code is in `src/orbit/optimizer.py`; the reference attention module that exposes the required statistics is in `src/orbit/model.py`.
 
-## 1. Base Muon candidate
+### Muon candidate
 
-Paper: the matrix gradient is momentum-smoothed and passed through a five-step quintic Newton–Schulz polar map.
+`newton_schulz` applies the five-step quintic polar iteration used by the Muon path. `Orbit._spectral_candidate` adds momentum and the aspect-ratio scaling before the Q/K-specific stage.
 
-Code:
-- `src/orbit/optimizer.py::newton_schulz`
-- `src/orbit/optimizer.py::Orbit._spectral_candidate`
-- `src/orbit/baselines.py::Muon._spectral_candidate`
+The matched control in `src/orbit/baselines.py` uses the same matrix update and parameter routing but does not collect ORBIT statistics.
 
-The same candidate rule is used by the matched Muon control and by ORBIT before Q/K conditioning.
+### Q/K statistics
 
-## 2. Optimizer-only Q/K statistics
+`RotaryAttention._update_covariances` stores one 2x2 covariance per head and RoPE frequency pair for Q and K. These buffers are updated only during training and only when ORBIT enables collection.
 
-Paper: for every attention head and RoPE frequency pair, maintain 2x2 query and key covariances.
+`RotaryAttention.orbit_metrics` rotates the opposite-side covariance over the configured relative-position offsets. It returns one metric per head/frequency pair.
 
-Code:
-- `src/orbit/model.py::RotaryAttention._update_covariances`
+### Preconditioning
 
-The statistics are exponential moving averages with beta = 0.95. They are buffers, not model parameters, and are disabled for ordinary Muon.
+`inverse_metric_power` handles the symmetric 2x2 inverse power analytically. It avoids a general eigensolver, clamps the condition number, and returns identity if the auxiliary metric is invalid.
 
-## 3. RoPE transport
-
-Paper:
-
-```text
-M_Q,f = E_delta [ R_f(delta) C_K,f R_f(delta)^T ]
-M_K,f = E_delta [ R_f(delta)^T C_Q,f R_f(delta) ]
-```
-
-Code:
-- `src/orbit/model.py::RotaryAttention.orbit_metrics`
-
-The expectation is approximated over the fixed displacement grid:
-
-```text
-{1, 2, 4, 8, 16, 32, 64, 128}
-```
-
-## 4. Analytic 2x2 inverse metric
-
-Paper: apply M^{-1/2} to each local update pair.
-
-Code:
-- `src/orbit/optimizer.py::inverse_metric_power`
-
-The implementation uses the closed-form spectrum of a symmetric 2x2 matrix rather than a batched eigensolver. The metric is symmetrized, regularized, condition-capped, and locally falls back to identity for non-finite auxiliary statistics.
-
-## 5. Q/K preconditioning
-
-Code:
-- `src/orbit/optimizer.py::Orbit._precondition_pair`
-
-The Q and K Muon candidates are reshaped into:
+`Orbit._precondition_pair` reshapes each candidate update to
 
 ```text
 [head, frequency, 2, input_dimension]
 ```
 
-and the local 2x2 transform acts on the two RoPE coordinates.
+applies the local transform, then restores the joint Q/K Frobenius norm.
 
-## 6. Joint Frobenius restoration
+### Model interface
 
-After preconditioning, ORBIT computes one scalar restore factor from the combined Q/K Frobenius norm and multiplies both transformed updates by it.
+`Orbit` expects the model to provide:
 
-This is the crucial control that keeps the total Q/K step budget equal to the original Muon candidate. ORBIT changes update direction/geometry rather than simply increasing update magnitude.
+```python
+model.orbit_qk_pairs()
+model.set_orbit_stat_collection(enabled)
+```
 
-## 7. Other parameters
+Each entry returned by `orbit_qk_pairs()` must contain the Q parameter, K parameter, and an attention module exposing `orbit_metrics(...)`.
 
-- Q/K: Muon candidate + ORBIT preconditioner
-- other hidden 2D matrices: standard Muon
-- token embeddings / tied LM head: auxiliary AdamW with decay
-- vectors, biases, norms: auxiliary AdamW without decay
-
-## 8. Inference
-
-Nothing from the optimizer is required at inference:
-- covariance buffers are training-only;
-- no new model parameters are introduced;
-- the attention forward pass remains standard RoPE attention.
-
-Therefore ORBIT has zero inference-time graph overhead.
+`OrbitGPT` is a complete reference implementation of that interface. Integrating ORBIT into another RoPE Transformer mainly requires exposing the same Q/K pairing and metric collection hooks.

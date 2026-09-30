@@ -13,12 +13,4 @@ work/
 *.pt
 *.pth
 *.bin
-docs/paper/*.aux
-docs/paper/*.bbl
-docs/paper/*.blg
-docs/paper/*.fls
-docs/paper/*.fdb_latexmk
-docs/paper/*.log
-docs/paper/*.out
-docs/paper/generated/
-docs/paper/figures/
+*.jsonl

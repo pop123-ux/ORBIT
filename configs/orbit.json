@@ -1,0 +1,10 @@
+{
+  "momentum": 0.95,
+  "newton_schulz_steps": 5,
+  "functional_power": 1.0,
+  "metric_eps": 1e-5,
+  "metric_condition_cap": 100.0,
+  "qk_stat_ema_beta": 0.95,
+  "relative_position_deltas": [1, 2, 4, 8, 16, 32, 64, 128],
+  "joint_qk_frobenius_restore": true
+}

@@ -1,96 +1,39 @@
-# Experimental design and evidence hierarchy
+# Experiments
 
-ORBIT was evaluated as a sequence of increasingly strict questions rather than as one undifferentiated benchmark.
+The main comparison used a RoPE GPT-style decoder on FineWeb-Edu. Context length was 512. The 124M model used 12 layers, 12 heads, width 768, and batch size 8; the 355M transfer model used 24 layers, 16 heads, width 1024, batch size 4, and gradient checkpointing.
 
-## 1. Broad optimizer context
+All comparisons used the same warmup/cosine schedule, Muon momentum 0.95, and five Newton-Schulz iterations.
 
-**Question:** Where does ORBIT sit among commonly used and recent matrix optimizers when each method carries its own selected recipe?
+## Matched Muon comparison
 
-124M, 900 steps, five seeds per optimizer.
-
-Methods: AdamW, AdaMuon, Muon, NorMuon, ASTRO, ORBIT.
-
-This experiment is useful context, but optimizer and hyperparameter-recipe effects are mixed. It is not the main causal claim.
-
-## 2. Crossed recipes
-
-**Question:** Does ORBIT still improve when the surrounding recipe is frozen?
-
-Muon and ORBIT are each evaluated under both the Muon-selected and ORBIT-selected configurations.
-
-Result: ORBIT has lower validation loss in all five paired seeds under both frozen recipes.
-
-The experiment also shows that recipe choice itself can be larger than the update-rule effect, which is why the broad tuned gap is not interpreted as purely algorithmic.
-
-## 3. Matched confirmation — primary result
-
-**Question:** If Muon and ORBIT receive the same search space, same candidate configurations, and ultimately the same selected hyperparameters, is there still a reproducible ORBIT effect?
-
-- shared deterministic grid: 10 candidates
-- both optimizers independently selected candidate `shared-04`
-- held-out seeds: 500–509
-- 124M / 900 steps
-
-Primary paired result:
+Muon and ORBIT were given the same ten candidate configurations. Both selected the same configuration before the held-out evaluation. The confirmation used seeds 500-509 at 124M for 900 steps.
 
 ```text
-Muon mean loss     5.495082
-ORBIT mean loss    5.488686
-ORBIT - Muon      -0.006396 nats
-95% CI            [-0.009838, -0.002955]
-ORBIT wins         9 / 10
+Muon mean loss      5.495082
+ORBIT mean loss     5.488686
+ORBIT - Muon       -0.006396
+95% CI             [-0.009838, -0.002955]
+ORBIT wins          9 / 10
 ```
 
-This is the paper's central mechanism-isolated estimate.
+Mean runtime was 802.9 s for Muon and 859.3 s for ORBIT in this setup. Peak allocated CUDA memory was 4.710 GB and 4.700 GB respectively.
 
-## 4. Mechanism ablation
+## Mechanism ablations
 
-All controls use the same matched ORBIT configuration and seeds 600–609.
+The extended ablation used the matched ORBIT configuration and seeds 600-609.
 
-- **Identity:** ORBIT training/statistics path, but no functional preconditioning.
-- **No-RoPE:** covariance conditioning remains, but relative-position rotation is removed.
-- **Diagonal:** RoPE-aware per-frequency scaling remains, but off-diagonal coupling inside each 2x2 pair is removed.
-- **Full ORBIT:** complete metric.
+| comparison | mean ORBIT delta | 95% CI | ORBIT wins |
+| --- | ---: | --- | ---: |
+| full vs identity | -0.008398 | [-0.011634, -0.005163] | 9/10 |
+| full vs no-RoPE | -0.003963 | [-0.006060, -0.001867] | 10/10 |
+| full vs diagonal | -0.001952 | [-0.003850, -0.000054] | 8/10 |
 
-Paired effects of full ORBIT:
+The identity comparison measures the effect of functional Q/K conditioning. The no-RoPE comparison removes relative-position transport. The diagonal variant removes off-diagonal coupling inside each 2x2 frequency pair.
 
-```text
-vs identity   -0.008398   CI [-0.011634, -0.005163]   wins 9/10
-vs no-RoPE    -0.003963   CI [-0.006060, -0.001867]   wins 10/10
-vs diagonal   -0.001952   CI [-0.003850, -0.000054]   wins 8/10
-```
+## Transfer runs
 
-Interpretation: generic functional Q/K conditioning contributes most; RoPE-aware transport adds a further consistent gain; full off-diagonal coupling adds a smaller effect.
+At 124M/2700 steps, two seeds gave mean ORBIT deltas of -0.3759 vs Muon, -0.2543 vs NorMuon, and -0.0587 vs ASTRO-v2.
 
-## 5. Longer horizon
+At 355M/900 steps, two seeds gave mean deltas of -0.2126 vs Muon and -0.1896 vs NorMuon. The ASTRO-v2 comparison was mixed: one seed favored each method, with a mean ORBIT-minus-ASTRO delta of +0.0297.
 
-124M, 2700 steps, two paired seeds.
-
-ORBIT remains below Muon, NorMuon, and ASTRO in both tested seeds.
-
-Because n=2 is small, this is transfer evidence rather than a high-powered significance test.
-
-## 6. Larger model
-
-355M, 900 steps, two paired seeds, gradient checkpointing.
-
-ORBIT is lower than Muon and NorMuon in both tested seeds. The ASTRO comparison is mixed: one seed favors each method.
-
-The 355M model uses batch size 4 instead of 8, so this experiment is **not** a controlled scaling law.
-
-## Reproducibility rule
-
-All final records carry:
-- seed
-- optimizer
-- frozen configuration
-- task ID
-- implementation digest
-- environment versions
-- runtime
-- peak CUDA allocation
-- validation loss
-- training trajectory
-- ORBIT diagnostics when applicable
-
-The merge scripts reject stale implementation digests, foreign task IDs, missing expected tasks, and incomplete phase structure.
+The transfer cells use independently frozen optimizer recipes and only two seeds. They are useful checks that the method still trains outside the primary setting, not high-powered matched estimates. The 355M run also uses a smaller batch, so it should not be read as a controlled scaling law.
