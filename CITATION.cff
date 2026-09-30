@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use ORBIT, please cite the paper and this software."
+title: "ORBIT: Function-Space Optimization for Rotary Query-Key Interactions"
+type: software
+authors:
+  - family-names: Pop
+    given-names: Alexandru
+repository-code: "https://github.com/pop123-ux/ORBIT"
+version: 0.1.0
+date-released: 2026-09-30
