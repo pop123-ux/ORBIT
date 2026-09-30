@@ -217,3 +217,8 @@ If you use ORBIT, please cite the paper and this repository. A machine-readable 
 This is the public research companion repository for the ORBIT paper. The paper establishes the method on RoPE-modified GPT-2-style decoders; larger controlled scaling studies, grouped-query attention, QK normalization, mixture-of-experts models, and lower-overhead implementations remain open directions.
 
 Independent replication and extension are encouraged.
+
+
+### Paper build dependency
+
+The manuscript uses a small Font Awesome GitHub icon. On Debian/Colab TeX Live installs, add `texlive-fonts-extra` before compiling the PDF.
