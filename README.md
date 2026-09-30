@@ -1,5 +1,9 @@
 # ORBIT
 
+[![CI](https://github.com/pop123-ux/ORBIT/actions/workflows/ci.yml/badge.svg)](https://github.com/pop123-ux/ORBIT/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-black)
+
 **Function-Space Optimization for Rotary Query-Key Interactions**
 
 ORBIT is a research optimizer for RoPE-based Transformer language models. It keeps Muon's matrix update as the base step, then modifies only query/key (Q/K) updates using tiny RoPE-aware local metrics derived from the function those matrices perform inside attention.
@@ -57,6 +61,12 @@ For paper reproduction:
 pip install -e ".[experiments]"
 ```
 
+To rebuild the manuscript and figures directly from the committed frozen evidence, with **no GPU training**:
+
+```bash
+python scripts/rebuild_frozen_paper.py
+```
+
 ---
 
 ## Minimal usage
@@ -99,7 +109,7 @@ ORBIT/
 ├── src/orbit/                  # ORBIT optimizer, Muon control, RoPE GPT model
 ├── scripts/                    # exact campaign/orchestration scripts used for the paper
 ├── configs/                    # frozen paper protocol and matched configs
-├── results/paper-v1/           # frozen paper-level statistics
+├── results/paper-v1/           # frozen raw runs + paper-level statistics
 ├── docs/                       # method, terminology, reproduction, experiment map
 ├── docs/paper/                 # LaTeX manuscript source
 ├── tests/                      # optimizer and metric tests
