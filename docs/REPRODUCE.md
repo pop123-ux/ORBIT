@@ -25,14 +25,19 @@ The paper uses FineWeb-Edu with the GPT-2 tokenizer.
 - each training step samples a random contiguous training window from the fixed pool
 - evaluation uses a separate seeded generator and 20 validation batches
 
+Choose a cache location first (the original harness keeps the historical environment variable name so the experiment digest remains identical):
+
+```bash
+export ASTRO_PAPER_TOKEN_CACHE=/path/to/fineweb_edu_v1.0.0_12p4m.pt
+```
+
 Prepare the cache once:
 
 ```bash
 python scripts/orbit_campaign.py \
   --phase discovery \
   --work-dir /path/to/orbit_paper \
-  --prepare-data \
-  --list-tasks
+  --prepare-data
 ```
 
 The campaign runner reuses the paper harness's deterministic cache logic and stores the data outside git.
@@ -133,6 +138,10 @@ This validates the exact expected seed/config structure before producing paper-l
 
 ## Regenerate figures and PDF
 
+For a full PDF build, install a TeX distribution with `latexmk`, `texlive-latex-extra`, `texlive-fonts-recommended`, and `texlive-science`.
+
+From a completed campaign:
+
 ```bash
 python scripts/orbit_plot.py \
   --work-dir /path/to/orbit_paper
@@ -164,3 +173,13 @@ results/paper-v1/results.json
 ```
 
 This lets readers inspect the evidence without rerunning GPU experiments.
+
+## No-training rebuild from committed evidence
+
+If you only want to verify the paper figures/tables from the public snapshot, do not rerun training:
+
+```bash
+python scripts/rebuild_frozen_paper.py
+```
+
+This copies the immutable `paper-v1` JSONL evidence into a temporary work directory, revalidates the experiment structure, regenerates the plots/tables, and compiles `docs/paper/main.pdf`.
