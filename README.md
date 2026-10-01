@@ -96,37 +96,37 @@ A small synthetic smoke run is included in [`examples/quickstart.py`](examples/q
 
 For one RoPE frequency pair, the pre-softmax query-key interaction can be written as
 
-$$
+```math
 s_{ij,f}
 =
 q_{i,f}^{\top}
 R_f(i-j)
 k_{j,f}.
-$$
+```
 
 Muon gives a strong generic matrix update, but it does not explicitly use this query-key functional structure. ORBIT does.
 
-If query changes by a small perturbation \(\delta q\),
+If query changes by a small perturbation $\delta q$,
 
-$$
+```math
 \delta s
 =
 \delta q^{\top}Rk.
-$$
+```
 
 The functional sensitivity of the query update therefore depends on the distribution of the keys, and vice versa. This motivates the opposite-side covariance metrics used by ORBIT.
 
-For each attention head and RoPE frequency pair, ORBIT maintains small \(2\times2\) exponential-moving-average covariance matrices
+For each attention head and RoPE frequency pair, ORBIT maintains small $2\times2$ exponential-moving-average covariance matrices
 
-$$
+```math
 C_{Q,f}=\mathbb{E}[q_fq_f^\top],
 \qquad
 C_{K,f}=\mathbb{E}[k_fk_f^\top].
-$$
+```
 
 These are transported through the RoPE relative-position rotations:
 
-$$
+```math
 M_{Q,f}
 =
 \frac{1}{|\mathcal D|}
@@ -134,9 +134,9 @@ M_{Q,f}
 R_f(\Delta)\,
 C_{K,f}\,
 R_f(\Delta)^\top,
-$$
+```
 
-$$
+```math
 M_{K,f}
 =
 \frac{1}{|\mathcal D|}
@@ -144,25 +144,25 @@ M_{K,f}
 R_f(\Delta)^\top\,
 C_{Q,f}\,
 R_f(\Delta).
-$$
+```
 
 The default displacement set is
 
-$$
+```math
 \mathcal D=\{1,2,4,8,16,32,64,128\}.
-$$
+```
 
-Muon first produces candidate updates \(U_Q\) and \(U_K\). ORBIT then applies the local inverse-square-root metric:
+Muon first produces candidate updates $U_Q$ and $U_K$. ORBIT then applies the local inverse-square-root metric:
 
-$$
+```math
 \widehat U_Q=M_Q^{-1/2}U_Q,
 \qquad
 \widehat U_K=M_K^{-1/2}U_K.
-$$
+```
 
 Finally, one shared factor restores the original combined Q/K Frobenius norm:
 
-$$
+```math
 \rho
 =
 \sqrt{
@@ -172,13 +172,13 @@ $$
 \lVert \widehat U_Q\rVert_F^2+\lVert \widehat U_K\rVert_F^2
 }
 },
-$$
+```
 
-$$
+```math
 \widetilde U_Q=\rho\widehat U_Q,
 \qquad
 \widetilde U_K=\rho\widehat U_K.
-$$
+```
 
 This control is important: ORBIT changes the **geometry** of the Q/K step without winning simply by increasing its total magnitude.
 
@@ -252,7 +252,7 @@ The main controlled comparison used a 124M-parameter RoPE GPT-style decoder on F
 
 Paired ORBIT-minus-Muon result:
 
-$$
+```math
 \Delta L
 =
 -0.006396\ \text{nats},
@@ -260,7 +260,7 @@ $$
 95\%\ \mathrm{CI}
 =
 [-0.009838,\,-0.002955].
-$$
+```
 
 ORBIT achieved the lower validation loss on **9 of 10 held-out paired runs**.
 
@@ -295,9 +295,9 @@ These variants separate generic function-aware Q/K conditioning, the additional 
 | Newton-Schulz steps | 5 |
 | Q/K covariance EMA | 0.95 |
 | Functional power | 1.0 |
-| Metric regularizer | \(10^{-5}\) |
+| Metric regularizer | $10^{-5}$ |
 | Metric condition cap | 100 |
-| Relative-position offsets | \(1,2,4,8,16,32,64,128\) |
+| Relative-position offsets | $1,2,4,8,16,32,64,128$ |
 
 The learning rate and weight decay should still be tuned for the training setup. Reference settings from the experiments are recorded in [`docs/TRAINING.md`](docs/TRAINING.md).
 
@@ -335,7 +335,7 @@ ORBIT/
 └── LICENSE
 ~~~
 
-The implementation uses closed-form algebra for the symmetric \(2\times2\) inverse metric rather than a general batched eigensolver. This keeps the RoPE-local operation small and avoids constructing a large second-order matrix.
+The implementation uses closed-form algebra for the symmetric $2\times2$ inverse metric rather than a general batched eigensolver. This keeps the RoPE-local operation small and avoids constructing a large second-order matrix.
 
 Code-level mapping from equations to functions is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
