@@ -11,7 +11,7 @@ The main experiments used RoPE GPT-style decoders trained on FineWeb-Edu with a 
 | 124M | 12 | 12 | 768 | 8 | No |
 | 355M | 24 | 16 | 1024 | 4 | Yes |
 
-Across the reported comparisons, the optimizer schedule used a 10% linear warmup followed by cosine decay to \(0.1\times\) the peak learning rate, gradient clipping at 1.0, Muon momentum 0.95, and five Newton-Schulz iterations.
+Across the reported comparisons, the optimizer schedule used a 10% linear warmup followed by cosine decay to $0.1\times$ the peak learning rate, gradient clipping at 1.0, Muon momentum 0.95, and five Newton-Schulz iterations.
 
 ## Primary result: matched Muon comparison
 
@@ -27,27 +27,27 @@ The confirmation used ten paired seeds, 500-509, on the 124M model for 900 steps
 | Mean runtime | 802.9 s | 859.3 s |
 | Peak allocated CUDA memory | 4.710 GB | 4.700 GB |
 
-For each seed \(s\), the paired effect is
+For each seed $s$, the paired effect is
 
-$$
+```math
 d_s
 =
 L_{\mathrm{ORBIT},s}
 -
 L_{\mathrm{Muon},s}.
-$$
+```
 
 The mean paired effect was
 
-$$
+```math
 \bar d=-0.006396\ \text{nats},
-$$
+```
 
-with a two-sided 95% Student-\(t\) confidence interval
+with a two-sided 95% Student-$t$ confidence interval
 
-$$
+```math
 [-0.009838,\,-0.002955].
-$$
+```
 
 ORBIT had the lower validation loss on **9 of 10 paired runs**.
 
@@ -67,7 +67,7 @@ The controls isolate different parts of the method:
 
 - **Identity** keeps the ORBIT statistics path but removes functional preconditioning.
 - **No-RoPE** keeps Q/K covariance conditioning but removes relative-position transport.
-- **Diagonal** retains RoPE-aware per-frequency scaling but removes off-diagonal coupling inside each \(2\times2\) pair.
+- **Diagonal** retains RoPE-aware per-frequency scaling but removes off-diagonal coupling inside each $2\times2$ pair.
 
 The largest contrast is against the identity control. RoPE-aware transport adds a further consistent effect, while the full off-diagonal coupling contributes a smaller increment in this setting.
 
@@ -100,7 +100,7 @@ At 124M and 2700 steps, two paired seeds gave the following mean ORBIT-minus-bas
 
 Both tested seeds favored ORBIT in each of these comparisons.
 
-Because \(n=2\), this is transfer evidence rather than a high-powered statistical estimate.
+Because $n=2$, this is transfer evidence rather than a high-powered statistical estimate.
 
 ## 355M transfer
 
@@ -128,13 +128,13 @@ ORBIT is an optimizer-only modification, so the covariance statistics and metric
 
 The primary estimand is the paired validation-loss difference
 
-$$
+```math
 L_{\mathrm{ORBIT}}-L_{\mathrm{baseline}}.
-$$
+```
 
 Negative values favor ORBIT.
 
-Confidence intervals reported for the matched and ablation experiments are two-sided Student-\(t\) intervals over the paired per-seed differences.
+Confidence intervals reported for the matched and ablation experiments are two-sided Student-$t$ intervals over the paired per-seed differences.
 
 The evidence is intentionally separated into:
 

@@ -1,12 +1,12 @@
 # Architecture and code map
 
-This document maps the main ORBIT operations to the public implementation.
+This document maps the main ORBIT operations to the repository implementation.
 
 ## Package layout
 
 | File | Responsibility |
 | --- | --- |
-| `src/orbit/optimizer.py` | Muon candidate, \(2\times2\) inverse metric, ORBIT preconditioning |
+| `src/orbit/optimizer.py` | Muon candidate, $2\times2$ inverse metric, ORBIT preconditioning |
 | `src/orbit/baselines.py` | matched Muon control |
 | `src/orbit/model.py` | RoPE GPT reference model and Q/K statistics |
 | `examples/quickstart.py` | minimal executable training example |
@@ -31,7 +31,7 @@ ORBIT therefore modifies the Q/K candidate **after** the generic spectral matrix
 
 location.
 
-Each covariance is \(2\times2\). Statistics are updated only during training and only when ORBIT enables collection.
+Each covariance is $2\times2$. Statistics are updated only during training and only when ORBIT enables collection.
 
 `RotaryAttention.orbit_metrics` applies the configured relative-position rotations and returns the query-side and key-side metrics.
 
@@ -39,11 +39,11 @@ Each covariance is \(2\times2\). Statistics are updated only during training and
 
 `optimizer.py::inverse_metric_power` computes
 
-$$
+```math
 M^{-p/2}
-$$
+```
 
-for a batch of symmetric \(2\times2\) matrices.
+for a batch of symmetric $2\times2$ matrices.
 
 The implementation uses the analytic two-dimensional spectrum rather than `torch.linalg.eigh`. It also performs scale normalization, condition-number clipping, a repeated-eigenvalue branch, and a local identity fallback for invalid auxiliary statistics.
 
