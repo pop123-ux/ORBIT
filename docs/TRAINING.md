@@ -26,15 +26,15 @@ The primary matched experiments used:
 | Muon momentum | 0.95 |
 | Newton-Schulz steps | 5 |
 | Q/K covariance EMA | 0.95 |
-| Metric epsilon | \(10^{-5}\) |
+| Metric epsilon | $10^{-5}$ |
 | Condition cap | 100 |
 | Gradient clipping | 1.0 |
 
 The RoPE displacement set was
 
-$$
+```math
 \mathcal D=\{1,2,4,8,16,32,64,128\}.
-$$
+```
 
 The matched configuration selected by both Muon and ORBIT used:
 
@@ -46,13 +46,13 @@ The matched configuration selected by both Muon and ORBIT used:
 
 The corresponding auxiliary AdamW learning rate is
 
-$$
+```math
 0.0181771645661641\times0.49061509693684174
 \approx
 0.008918.
-$$
+```
 
-A 10% linear warmup was followed by cosine decay to \(0.1\times\) the peak learning rate. The same schedule multiplier was applied to the matrix and auxiliary learning rates.
+A 10% linear warmup was followed by cosine decay to $0.1\times$ the peak learning rate. The same schedule multiplier was applied to the matrix and auxiliary learning rates.
 
 ## Optimizer construction
 
