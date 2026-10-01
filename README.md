@@ -284,6 +284,12 @@ These variants separate generic function-aware Q/K conditioning, the additional 
 
 The learning rate and weight decay should still be tuned for the training setup. Reference settings from the experiments are recorded in [`docs/TRAINING.md`](docs/TRAINING.md).
 
+### Hyperparameter tuning
+
+For the current method, the RoPE displacement grid, functional power, covariance EMA, and condition cap are treated as part of the optimizer definition rather than as extra per-run search dimensions. The main training-recipe parameters to retune are therefore the matrix learning rate, auxiliary AdamW learning rate, and weight decay.
+
+When comparing ORBIT with Muon, use the same candidate space for the shared recipe parameters. The primary experiment in this repository followed that rule so the Q/K preconditioner was not given a larger tuning budget than the baseline.
+
 ---
 
 ## Implementation
