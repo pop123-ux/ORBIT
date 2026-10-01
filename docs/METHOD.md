@@ -254,7 +254,7 @@ The Q/K covariance buffers are training-only. They introduce no new learned para
 
 ## Ablation variants
 
-The public implementation includes four variants:
+The implementation includes four variants:
 
 ~~~python
 Orbit(model, variant="orbit")
