@@ -16,7 +16,8 @@ DOCS = [
 def test_github_math_uses_supported_delimiters():
     for path in DOCS:
         text = path.read_text()
-        assert "$" not in text, f"use fenced math blocks in {path}"
+        display_delimiter = "$" * 2
+        assert display_delimiter not in text, f"use fenced math blocks in {path}"
         assert r"\(" not in text, f"use $...$ for inline math in {path}"
         assert r"\)" not in text, f"use $...$ for inline math in {path}"
         assert not any(line.strip() == "$" for line in text.splitlines()), (
