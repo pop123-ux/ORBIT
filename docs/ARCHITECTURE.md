@@ -1,40 +1,134 @@
-# Implementation notes
+# Architecture and code map
 
-The public implementation is intentionally small. The optimizer-specific code is in `src/orbit/optimizer.py`; the reference attention module that exposes the required statistics is in `src/orbit/model.py`.
+This document maps the main ORBIT operations to the public implementation.
 
-### Muon candidate
+## Package layout
 
-`newton_schulz` applies the five-step quintic polar iteration used by the Muon path. `Orbit._spectral_candidate` adds momentum and the aspect-ratio scaling before the Q/K-specific stage.
+| File | Responsibility |
+| --- | --- |
+| `src/orbit/optimizer.py` | Muon candidate, \(2\times2\) inverse metric, ORBIT preconditioning |
+| `src/orbit/baselines.py` | matched Muon control |
+| `src/orbit/model.py` | RoPE GPT reference model and Q/K statistics |
+| `examples/quickstart.py` | minimal executable training example |
+| `tests/test_orbit.py` | metric, statistics, optimizer-step and ablation tests |
+| `tests/test_muon_control.py` | baseline-control tests |
 
-The matched control in `src/orbit/baselines.py` uses the same matrix update and parameter routing but does not collect ORBIT statistics.
+## Muon base update
 
-### Q/K statistics
+`optimizer.py::newton_schulz` implements the five-step quintic polar iteration.
 
-`RotaryAttention._update_covariances` stores one 2x2 covariance per head and RoPE frequency pair for Q and K. These buffers are updated only during training and only when ORBIT enables collection.
+`Orbit._spectral_candidate` applies momentum, look-ahead, Newton-Schulz orthogonalization, and the same aspect-ratio scaling used by the matched Muon control.
 
-`RotaryAttention.orbit_metrics` rotates the opposite-side covariance over the configured relative-position offsets. It returns one metric per head/frequency pair.
+ORBIT therefore modifies the Q/K candidate **after** the generic spectral matrix step has been constructed.
 
-### Preconditioning
+## Q/K statistics
 
-`inverse_metric_power` handles the symmetric 2x2 inverse power analytically. It avoids a general eigensolver, clamps the condition number, and returns identity if the auxiliary metric is invalid.
+`model.py::RotaryAttention._update_covariances` maintains one query covariance and one key covariance for every
 
-`Orbit._precondition_pair` reshapes each candidate update to
+~~~text
+[attention head, RoPE frequency pair]
+~~~
 
-```text
+location.
+
+Each covariance is \(2\times2\). Statistics are updated only during training and only when ORBIT enables collection.
+
+`RotaryAttention.orbit_metrics` applies the configured relative-position rotations and returns the query-side and key-side metrics.
+
+## Inverse metric
+
+`optimizer.py::inverse_metric_power` computes
+
+$$
+M^{-p/2}
+$$
+
+for a batch of symmetric \(2\times2\) matrices.
+
+The implementation uses the analytic two-dimensional spectrum rather than `torch.linalg.eigh`. It also performs scale normalization, condition-number clipping, a repeated-eigenvalue branch, and a local identity fallback for invalid auxiliary statistics.
+
+## Q/K preconditioning
+
+`Orbit._precondition_pair` reshapes each matrix candidate to
+
+~~~text
 [head, frequency, 2, input_dimension]
-```
+~~~
 
-applies the local transform, then restores the joint Q/K Frobenius norm.
+so the local metric acts directly on the two RoPE coordinates.
 
-### Model interface
+After applying the transforms, one scalar restores the combined Q/K Frobenius norm.
 
-`Orbit` expects the model to provide:
+## Parameter routing
 
-```python
+During initialization, `Orbit` assigns each parameter to one of five internal roles:
+
+~~~text
+q
+k
+spectral
+aux_decay
+aux_nodecay
+~~~
+
+The `q`, `k`, and `spectral` paths use the Muon-style matrix candidate. Only `q` and `k` then enter `_precondition_pair`.
+
+The auxiliary paths implement AdamW-style updates for parameters that are not routed through the spectral matrix update.
+
+## Model interface
+
+The reference `OrbitGPT` exposes:
+
+~~~python
 model.orbit_qk_pairs()
 model.set_orbit_stat_collection(enabled)
-```
+~~~
 
-Each entry returned by `orbit_qk_pairs()` must contain the Q parameter, K parameter, and an attention module exposing `orbit_metrics(...)`.
+Each item returned by `orbit_qk_pairs()` provides:
 
-`OrbitGPT` is a complete reference implementation of that interface. Integrating ORBIT into another RoPE Transformer mainly requires exposing the same Q/K pairing and metric collection hooks.
+~~~python
+{
+    "q": q_parameter,
+    "k": k_parameter,
+    "module": attention_module,
+}
+~~~
+
+and the attention module must provide:
+
+~~~python
+attention_module.orbit_metrics(deltas, rotate=True, eps=...)
+~~~
+
+The current optimizer also identifies `model.wte.weight` and `model.lm_head.weight` as the embedding/head parameters assigned to the auxiliary decay path.
+
+## Optimizer step
+
+At a high level, one ORBIT step is:
+
+~~~text
+gradient
+  │
+  ├─ hidden 2-D matrix ──> Muon candidate
+  │                          │
+  │                          ├─ Q/K ──> ORBIT metric transform ──> joint norm restore
+  │                          └─ other matrix ────────────────────> update
+  │
+  └─ vector / embedding / head ──> auxiliary AdamW
+~~~
+
+The Q/K metric path is local to each attention layer. No full-model curvature matrix is formed.
+
+## Inference boundary
+
+ORBIT changes only the optimizer and training-time statistics.
+
+The following are not required after training:
+
+- covariance buffers;
+- metric construction;
+- inverse metric transforms;
+- joint restore factors;
+- optimizer diagnostics.
+
+The deployed model retains the standard RoPE attention forward pass.
