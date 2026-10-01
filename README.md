@@ -43,6 +43,8 @@ The package requires Python 3.10+ and PyTorch 2.2+.
 The repository includes a compact RoPE GPT reference model with the hooks ORBIT needs:
 
 ~~~python
+import torch
+
 from orbit import Orbit, OrbitGPT, OrbitGPTConfig
 
 model = OrbitGPT(
@@ -181,6 +183,21 @@ $$
 This control is important: ORBIT changes the **geometry** of the Q/K step without winning simply by increasing its total magnitude.
 
 Full derivation and numerical details are in [`docs/METHOD.md`](docs/METHOD.md).
+
+### Update path
+
+```mermaid
+flowchart LR
+    G[Gradient] --> M[Muon matrix candidate]
+    M --> QK{Parameter role}
+    QK -->|Q / K| F[RoPE-aware 2x2 metric]
+    F --> R[Joint Frobenius restoration]
+    QK -->|Other hidden matrix| S[Muon update]
+    R --> U[Parameter update]
+    S --> U
+```
+
+Only the Q/K branch adds ORBIT's function-space conditioning.
 
 ---
 
