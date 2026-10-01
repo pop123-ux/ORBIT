@@ -1,6 +1,6 @@
 # Architecture and code map
 
-This document maps the main ORBIT operations to the public implementation.
+This document maps the main ORBIT operations to the repository implementation.
 
 ## Package layout
 
