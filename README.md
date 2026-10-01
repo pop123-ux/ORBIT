@@ -13,6 +13,8 @@ The central idea is simple: two matrices with the same shape can play very diffe
 
 At inference time, ORBIT disappears completely. The trained model has the same parameters and the same forward graph as the underlying Transformer.
 
+**Documentation:** [method](docs/METHOD.md) · [architecture](docs/ARCHITECTURE.md) · [experiments](docs/EXPERIMENTS.md) · [training notes](docs/TRAINING.md)
+
 ---
 
 ## Installation
@@ -182,6 +184,30 @@ Full derivation and numerical details are in [`docs/METHOD.md`](docs/METHOD.md).
 
 ---
 
+## Relationship to Muon
+
+ORBIT is built around the matrix-update idea introduced by [Muon](https://github.com/KellerJordan/Muon). The public implementation keeps a matched Muon control so the Q/K-specific ORBIT transform can be tested without changing the surrounding parameter-routing policy.
+
+Muon supplies the generic spectral matrix candidate. ORBIT adds a second stage only for RoPE query/key projections:
+
+$
+\text{Muon matrix candidate}
+\;\longrightarrow\;
+\text{RoPE-aware Q/K metric transform}
+\;\longrightarrow\;
+\text{joint norm restoration}.
+$
+
+The original Muon implementation and write-up are useful background:
+
+- [KellerJordan/Muon](https://github.com/KellerJordan/Muon)
+- [Muon: An optimizer for hidden layers in neural networks](https://kellerjordan.github.io/posts/muon/)
+- [RoFormer / RoPE](https://arxiv.org/abs/2104.09864)
+
+ORBIT should therefore be read as a function-aware extension of a Muon-style matrix update, not as a replacement for the entire optimizer stack.
+
+---
+
 ## Parameter routing
 
 ORBIT is not applied indiscriminately to every tensor.
@@ -306,6 +332,28 @@ Each Q/K pair provides the query parameter, key parameter, and an attention modu
 The current optimizer also expects the model to expose its token embedding and language-model head as `wte` and `lm_head`, matching the included reference implementation. The interface is intentionally explicit rather than pretending ORBIT is a drop-in optimizer for arbitrary PyTorch models.
 
 For a new architecture, the main integration work is to expose the Q/K projection pairs, collect unrotated Q/K pair covariances during training, implement the same RoPE-relative metric construction, and identify the embedding/head parameters that should stay on the auxiliary AdamW path.
+
+---
+
+## Tests
+
+The test suite covers the pieces that are easiest to get subtly wrong in an optimizer implementation:
+
+- Q/K statistics are disabled by default and enabled by ORBIT;
+- RoPE metrics remain positive and position-sensitive;
+- the closed-form $2\times2$ inverse metric matches an eigendecomposition reference;
+- extreme and repeated spectra stay finite;
+- invalid auxiliary metrics fall back locally to identity;
+- ORBIT steps change weights without producing non-finite values;
+- the identity ablation preserves the statistics path while disabling preconditioning.
+
+Run:
+
+~~~bash
+pytest -q
+~~~
+
+CI runs the same package tests on every push and pull request.
 
 ---
 
