@@ -2,30 +2,45 @@
 
 [![CI](https://github.com/pop123-ux/ORBIT/actions/workflows/ci.yml/badge.svg)](https://github.com/pop123-ux/ORBIT/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-black)
 
-ORBIT is a RoPE-aware extension of Muon for Transformer query/key updates. It keeps Muon's matrix update as the base direction, then preconditions Q/K in the local geometry induced by rotary attention. The model itself is unchanged at inference.
+**Function-Space Optimization for Rotary Query-Key Interactions**
 
-The repository contains the optimizer, a matched Muon control, the RoPE GPT reference model used for development, tests, and compact notes on the method and reported experiments.
+ORBIT is a research optimizer for RoPE-based Transformer language models. It starts from a Muon matrix update, then modifies only the query/key update using a local metric derived from the attention function itself.
 
-## Install
+The central idea is simple: two matrices with the same shape can play very different roles inside a network. ORBIT uses the known geometry of rotary query-key interactions to make the optimizer aware of that role.
 
-```bash
+At inference time, ORBIT disappears completely. The trained model has the same parameters and the same forward graph as the underlying Transformer.
+
+---
+
+## Installation
+
+From source:
+
+~~~bash
 git clone https://github.com/pop123-ux/ORBIT.git
 cd ORBIT
 pip install -e .
-```
+~~~
 
-For development:
+Development install:
 
-```bash
+~~~bash
 pip install -e ".[dev]"
 pytest
-```
+~~~
+
+The package requires Python 3.10+ and PyTorch 2.2+.
+
+---
 
 ## Quick start
 
-```python
+The repository includes a compact RoPE GPT reference model with the hooks ORBIT needs:
+
+~~~python
 from orbit import Orbit, OrbitGPT, OrbitGPTConfig
 
 model = OrbitGPT(
@@ -43,75 +58,281 @@ optimizer = Orbit(
     adamw_lr=3e-4,
     weight_decay=0.05,
 )
-```
+~~~
 
-A Muon control with the same parameter routing is available as `orbit.Muon`.
+Training is otherwise standard PyTorch:
 
-## Method
+~~~python
+loss = model(x, labels=x).loss
+loss.backward()
 
-For one RoPE frequency pair, the attention contribution is
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+optimizer.step()
+optimizer.zero_grad(set_to_none=True)
+~~~
 
-```text
-q^T R(delta) k
-```
+A matched Muon control using the same parameter-routing policy is available as:
 
-ORBIT keeps exponential-moving-average 2x2 covariances for Q and K, transports the opposite-side covariance through the RoPE rotation, and builds a local metric
+~~~python
+from orbit import Muon
 
-```text
-M_Q = E_delta[R C_K R^T]
-M_K = E_delta[R^T C_Q R]
-```
+optimizer = Muon(
+    model,
+    lr=0.02,
+    adamw_lr=3e-4,
+    weight_decay=0.05,
+)
+~~~
 
-The Muon candidate is preconditioned with `M^(-1/2)`. Q and K are then rescaled jointly so their combined Frobenius norm matches the original Muon candidate. Non-Q/K hidden matrices stay on the Muon path; embeddings, biases, and normalization parameters use the auxiliary AdamW path.
+A small synthetic smoke run is included in [`examples/quickstart.py`](examples/quickstart.py).
 
-The implementation uses closed-form 2x2 matrix algebra rather than a batched eigensolver.
+---
 
-More detail: [method](docs/METHOD.md) · [implementation](docs/ARCHITECTURE.md)
+## Why ORBIT?
 
-## Variants
+For one RoPE frequency pair, the pre-softmax query-key interaction can be written as
 
-```python
-Orbit(model, variant="orbit")
-Orbit(model, variant="orbit_norope")
-Orbit(model, variant="orbit_diag")
-Orbit(model, variant="orbit_identity")
-```
+$$
+s_{ij,f}
+=
+q_{i,f}^{\top}
+R_f(i-j)
+k_{j,f}.
+$$
 
-`orbit_identity` keeps the ORBIT statistics path but disables functional preconditioning. The other two variants remove RoPE transport or off-diagonal coupling.
+Muon gives a strong generic matrix update, but it does not explicitly use this query-key functional structure. ORBIT does.
 
-## Reported experiments
+If query changes by a small perturbation \(\delta q\),
 
-The matched 124M comparison used the same selected hyperparameters for Muon and ORBIT and ten held-out paired seeds.
+$$
+\delta s
+=
+\delta q^{\top}Rk.
+$$
 
-| method | mean validation loss |
+The functional sensitivity of the query update therefore depends on the distribution of the keys, and vice versa. This motivates the opposite-side covariance metrics used by ORBIT.
+
+For each attention head and RoPE frequency pair, ORBIT maintains small \(2\times2\) exponential-moving-average covariance matrices
+
+$$
+C_{Q,f}=\mathbb{E}[q_fq_f^\top],
+\qquad
+C_{K,f}=\mathbb{E}[k_fk_f^\top].
+$$
+
+These are transported through the RoPE relative-position rotations:
+
+$$
+M_{Q,f}
+=
+\frac{1}{|\mathcal D|}
+\sum_{\Delta\in\mathcal D}
+R_f(\Delta)\,
+C_{K,f}\,
+R_f(\Delta)^\top,
+$$
+
+$$
+M_{K,f}
+=
+\frac{1}{|\mathcal D|}
+\sum_{\Delta\in\mathcal D}
+R_f(\Delta)^\top\,
+C_{Q,f}\,
+R_f(\Delta).
+$$
+
+The default displacement set is
+
+$$
+\mathcal D=\{1,2,4,8,16,32,64,128\}.
+$$
+
+Muon first produces candidate updates \(U_Q\) and \(U_K\). ORBIT then applies the local inverse-square-root metric:
+
+$$
+\widehat U_Q=M_Q^{-1/2}U_Q,
+\qquad
+\widehat U_K=M_K^{-1/2}U_K.
+$$
+
+Finally, one shared factor restores the original combined Q/K Frobenius norm:
+
+$$
+\rho
+=
+\sqrt{
+\frac{
+\lVert U_Q\rVert_F^2+\lVert U_K\rVert_F^2
+}{
+\lVert \widehat U_Q\rVert_F^2+\lVert \widehat U_K\rVert_F^2
+}
+},
+$$
+
+$$
+\widetilde U_Q=\rho\widehat U_Q,
+\qquad
+\widetilde U_K=\rho\widehat U_K.
+$$
+
+This control is important: ORBIT changes the **geometry** of the Q/K step without winning simply by increasing its total magnitude.
+
+Full derivation and numerical details are in [`docs/METHOD.md`](docs/METHOD.md).
+
+---
+
+## Parameter routing
+
+ORBIT is not applied indiscriminately to every tensor.
+
+| Parameter class | Update |
+| --- | --- |
+| Query / Key projections | Muon candidate + ORBIT preconditioning |
+| Other hidden 2-D matrices | Muon |
+| Token embeddings / tied LM head | AdamW with decay |
+| Biases / norms / vectors | AdamW without decay |
+
+This follows the same basic design principle used by Muon-style optimizers: matrix-valued hidden weights use a spectral update, while parameters that are not natural matrix targets remain on an AdamW path.
+
+---
+
+## Primary matched result
+
+The main controlled comparison used a 124M-parameter RoPE GPT-style decoder on FineWeb-Edu. Muon and ORBIT were presented with the same ten candidate hyperparameter configurations and independently selected the same configuration before evaluation on ten new paired seeds.
+
+| | Muon | ORBIT |
+| --- | ---: | ---: |
+| Mean validation loss | 5.4951 | **5.4887** |
+| Mean wall-clock time | 802.9 s | 859.3 s |
+| Peak allocated CUDA memory | 4.710 GB | 4.700 GB |
+
+Paired ORBIT-minus-Muon result:
+
+$$
+\Delta L
+=
+-0.006396\ \text{nats},
+\qquad
+95\%\ \mathrm{CI}
+=
+[-0.009838,\,-0.002955].
+$$
+
+ORBIT achieved the lower validation loss on **9 of 10 held-out paired runs**.
+
+The measured training-time overhead was approximately **7%** in this setting. Peak allocated CUDA memory was effectively unchanged, and ORBIT adds **no inference-time computation**.
+
+The matched experiment is the primary result because optimizer and hyperparameter recipe are held fixed. Broader independently tuned comparisons are useful context, but they mix optimizer effects with recipe effects.
+
+See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for the ablations and transfer runs.
+
+---
+
+## Mechanism variants
+
+The optimizer exposes the controls used to isolate the mechanism:
+
+~~~python
+Orbit(model, variant="orbit")           # full method
+Orbit(model, variant="orbit_norope")    # remove RoPE transport
+Orbit(model, variant="orbit_diag")      # remove off-diagonal 2x2 coupling
+Orbit(model, variant="orbit_identity")  # collect stats, no preconditioning
+~~~
+
+These variants separate generic function-aware Q/K conditioning, the additional contribution of RoPE-relative-position transport, and the smaller contribution of full two-dimensional coupling.
+
+---
+
+## Defaults
+
+| Hyperparameter | Default |
 | --- | ---: |
-| Muon | 5.4951 |
-| ORBIT | 5.4887 |
+| Muon momentum | 0.95 |
+| Newton-Schulz steps | 5 |
+| Q/K covariance EMA | 0.95 |
+| Functional power | 1.0 |
+| Metric regularizer | \(10^{-5}\) |
+| Metric condition cap | 100 |
+| Relative-position offsets | \(1,2,4,8,16,32,64,128\) |
 
-Mean paired difference: **-0.006396 nats**, 95% CI **[-0.009838, -0.002955]**, with ORBIT lower on 9/10 seeds. The measured runtime overhead was about 7% in that setting; peak allocated CUDA memory was effectively unchanged.
+The learning rate and weight decay should still be tuned for the training setup. Reference settings from the experiments are recorded in [`docs/TRAINING.md`](docs/TRAINING.md).
 
-Ablations and the 124M/2700-step and 355M/900-step transfer runs are summarized in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
+---
 
-## Layout
+## Implementation
 
-```text
-src/orbit/
-    optimizer.py    ORBIT update and 2x2 metric algebra
-    baselines.py    matched Muon control
-    model.py        RoPE GPT reference model
+~~~text
+ORBIT/
+├── src/orbit/
+│   ├── optimizer.py       # ORBIT update + closed-form 2x2 metric algebra
+│   ├── baselines.py       # matched Muon control
+│   ├── model.py           # RoPE GPT reference model and Q/K statistics
+│   └── __init__.py
+├── examples/
+│   └── quickstart.py
+├── configs/
+│   └── orbit.json
+├── docs/
+│   ├── METHOD.md
+│   ├── ARCHITECTURE.md
+│   ├── EXPERIMENTS.md
+│   └── TRAINING.md
+├── tests/
+│   ├── test_orbit.py
+│   └── test_muon_control.py
+├── pyproject.toml
+├── CITATION.cff
+└── LICENSE
+~~~
 
-examples/
-    quickstart.py
+The implementation uses closed-form algebra for the symmetric \(2\times2\) inverse metric rather than a general batched eigensolver. This keeps the RoPE-local operation small and avoids constructing a large second-order matrix.
 
-docs/
-    METHOD.md
-    ARCHITECTURE.md
-    EXPERIMENTS.md
-    TRAINING.md
+Code-level mapping from equations to functions is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-tests/
-```
+---
+
+## Integrating ORBIT into another RoPE Transformer
+
+The reference model exposes two small hooks:
+
+~~~python
+model.orbit_qk_pairs()
+model.set_orbit_stat_collection(enabled)
+~~~
+
+Each Q/K pair provides the query parameter, key parameter, and an attention module that can return its ORBIT metrics.
+
+The current optimizer also expects the model to expose its token embedding and language-model head as `wte` and `lm_head`, matching the included reference implementation. The interface is intentionally explicit rather than pretending ORBIT is a drop-in optimizer for arbitrary PyTorch models.
+
+For a new architecture, the main integration work is to expose the Q/K projection pairs, collect unrotated Q/K pair covariances during training, implement the same RoPE-relative metric construction, and identify the embedding/head parameters that should stay on the auxiliary AdamW path.
+
+---
+
+## Research status and scope
+
+ORBIT is research code, not a claim of universal optimizer superiority.
+
+The strongest evidence in the current study is the matched Muon comparison above. Additional experiments include mechanism ablations, a 124M longer-horizon transfer run, and a 355M transfer run. The larger transfer cells use only two seeds and the 355M setting uses a different batch size, so they should not be interpreted as a controlled scaling law.
+
+Current open directions include grouped-query attention, QK normalization, mixture-of-experts architectures, larger pretraining budgets, and reducing the training-time overhead of the statistics path.
+
+---
 
 ## Citation
 
-See [CITATION.cff](CITATION.cff).
+A machine-readable citation is provided in [`CITATION.cff`](CITATION.cff).
+
+~~~bibtex
+@misc{pop2026orbit,
+  author = {Alexandru Pop},
+  title  = {ORBIT: Function-Space Optimization for Rotary Query-Key Interactions},
+  year   = {2026},
+  note   = {Research software},
+  url    = {https://github.com/pop123-ux/ORBIT}
+}
+~~~
+
+## License
+
+ORBIT is released under the [MIT License](LICENSE).
