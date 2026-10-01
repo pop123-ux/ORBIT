@@ -203,7 +203,7 @@ Only the Q/K branch adds ORBIT's function-space conditioning.
 
 ## Relationship to Muon
 
-ORBIT is built around the matrix-update idea introduced by [Muon](https://github.com/KellerJordan/Muon). The public implementation keeps a matched Muon control so the Q/K-specific ORBIT transform can be tested without changing the surrounding parameter-routing policy.
+ORBIT is built around the matrix-update idea introduced by [Muon](https://github.com/KellerJordan/Muon). The repository includes a matched Muon control so the Q/K-specific ORBIT transform can be tested without changing the surrounding parameter-routing policy.
 
 Muon supplies the generic spectral matrix candidate. ORBIT adds a second stage only for RoPE query/key projections:
 
@@ -406,4 +406,4 @@ A machine-readable citation is provided in [`CITATION.cff`](CITATION.cff).
 
 ## License
 
-ORBIT is released under the [MIT License](LICENSE).
+ORBIT is licensed under the [MIT License](LICENSE).
