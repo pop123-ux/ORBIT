@@ -7,3 +7,14 @@ authors:
     given-names: Alexandru
 repository-code: "https://github.com/pop123-ux/ORBIT"
 version: 0.1.0
+abstract: >-
+  ORBIT is a research optimizer for RoPE-based Transformer language models that
+  preconditions Muon query/key updates with local function-space metrics derived
+  from rotary attention geometry while preserving the combined Q/K update norm.
+keywords:
+  - optimization
+  - transformers
+  - RoPE
+  - Muon
+  - attention
+license: MIT
