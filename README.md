@@ -207,13 +207,13 @@ ORBIT is built around the matrix-update idea introduced by [Muon](https://github
 
 Muon supplies the generic spectral matrix candidate. ORBIT adds a second stage only for RoPE query/key projections:
 
-$
+```math
 \text{Muon matrix candidate}
 \;\longrightarrow\;
 \text{RoPE-aware Q/K metric transform}
 \;\longrightarrow\;
 \text{joint norm restoration}.
-$
+```
 
 The original Muon implementation and write-up are useful background:
 
