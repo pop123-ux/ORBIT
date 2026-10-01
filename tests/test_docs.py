@@ -16,9 +16,12 @@ DOCS = [
 def test_github_math_uses_supported_delimiters():
     for path in DOCS:
         text = path.read_text()
-        assert "$$" not in text, f"use fenced math blocks in {path}"
+        assert "$" not in text, f"use fenced math blocks in {path}"
         assert r"\(" not in text, f"use $...$ for inline math in {path}"
         assert r"\)" not in text, f"use $...$ for inline math in {path}"
+        assert not any(line.strip() == "$" for line in text.splitlines()), (
+            f"use a fenced math block instead of multiline single-dollar math in {path}"
+        )
 
 
 def test_markdown_fences_are_balanced():
