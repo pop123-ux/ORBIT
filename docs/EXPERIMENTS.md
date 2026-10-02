@@ -37,10 +37,10 @@ The corrected primary search uses Muon only. Ten deterministic 124M/900-step Muo
 
 The final paper uses the following hierarchy:
 
-1. **Matched Muon–ORBIT confirmation** — primary mechanism estimate. Muon is tuned over ten deterministic candidates; its winner is frozen and applied unchanged to Muon and ORBIT on held-out paired seeds.
-2. **Mechanism ablations** — full, identity, no-RoPE, and diagonal under that same Muon-selected frozen recipe.
+1. **Matched Muon–ORBIT confirmation** — the sole primary confirmatory contrast. Muon is tuned over ten deterministic candidates; its winner is frozen and applied unchanged to Muon and ORBIT on held-out paired seeds.
+2. **Mechanism ablations** — secondary full/identity/no-RoPE/diagonal analyses under that same Muon-selected frozen recipe. Their confidence intervals are reported without multiplicity adjustment.
 3. **Cross-configuration experiment** — separates update-rule behavior from recipe sensitivity.
-4. **Long-horizon and 355M cells** — secondary transfer checks only.
+4. **Long-horizon and 355M cells** — descriptive transfer checks only.
 5. **Broad independently selected benchmark** — exploratory context, not an isolated optimizer ranking.
 
 The unusually large historical transfer gaps and the difference between the historical broad Muon and matched Muon cells are therefore not used as evidence for a larger ORBIT mechanism effect.
