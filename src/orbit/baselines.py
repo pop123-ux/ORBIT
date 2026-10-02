@@ -113,3 +113,15 @@ class Muon(torch.optim.Optimizer):
     def auxiliary_lr(self) -> float:
         group = self.param_groups[0]
         return float(group["lr"] * group["adamw_lr_ratio"])
+
+    def load_state_dict(self, state_dict):  # type: ignore[override]
+        super().load_state_dict(state_dict)
+        for group in self.param_groups:
+            if "adamw_lr_ratio" not in group:
+                legacy_aux = group.pop("adamw_lr", None)
+                if legacy_aux is None:
+                    raise KeyError("optimizer checkpoint is missing auxiliary LR metadata")
+                lr = float(group["lr"])
+                if lr == 0.0 and float(legacy_aux) != 0.0:
+                    raise ValueError("cannot recover auxiliary LR ratio from zero matrix LR")
+                group["adamw_lr_ratio"] = (float(legacy_aux) / lr) if lr else 0.0
