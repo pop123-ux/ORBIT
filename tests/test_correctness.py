@@ -57,8 +57,8 @@ def test_orbit_metric_uses_same_causal_rotation_as_attention_score():
     with torch.no_grad():
         k_cov = torch.tensor([[4.0, 1.3], [1.3, 0.7]])
         q_cov = torch.tensor([[1.1, -0.6], [-0.6, 3.2]])
-        attn.orbit_k_cov.copy_(k_cov.view(1, 1, 2, 2))
-        attn.orbit_q_cov.copy_(q_cov.view(1, 1, 2, 2))
+        attn.orbit_k_second_moment.copy_(k_cov.view(1, 1, 2, 2))
+        attn.orbit_q_second_moment.copy_(q_cov.view(1, 1, 2, 2))
 
     delta = 8
     mq, mk = attn.orbit_metrics((delta,), rotate=True, eps=0.0)
@@ -94,20 +94,20 @@ def test_orbit_statistics_roundtrip_in_model_state_dict():
     model(x, labels=x)
 
     state = model.state_dict()
-    assert "blocks.0.attn.orbit_q_cov" in state
-    assert "blocks.0.attn.orbit_k_cov" in state
+    assert "blocks.0.attn.orbit_q_second_moment" in state
+    assert "blocks.0.attn.orbit_k_second_moment" in state
     assert "blocks.0.attn.orbit_stats_seen" in state
 
     restored = OrbitGPT(config)
     restored.load_state_dict(state)
 
     assert torch.equal(
-        restored.blocks[0].attn.orbit_q_cov,
-        model.blocks[0].attn.orbit_q_cov,
+        restored.blocks[0].attn.orbit_q_second_moment,
+        model.blocks[0].attn.orbit_q_second_moment,
     )
     assert torch.equal(
-        restored.blocks[0].attn.orbit_k_cov,
-        model.blocks[0].attn.orbit_k_cov,
+        restored.blocks[0].attn.orbit_k_second_moment,
+        model.blocks[0].attn.orbit_k_second_moment,
     )
     assert torch.equal(
         restored.blocks[0].attn.orbit_stats_seen,
@@ -177,7 +177,7 @@ def _ddp_worker(rank: int, world_size: int, init_file: str) -> None:
             optimizer.zero_grad(set_to_none=True)
 
         q_weight = model.blocks[0].attn.q_proj.weight.detach()
-        q_cov = model.blocks[0].attn.orbit_q_cov.detach()
+        q_cov = model.blocks[0].attn.orbit_q_second_moment.detach()
 
         gathered_weights = [torch.empty_like(q_weight) for _ in range(world_size)]
         gathered_covs = [torch.empty_like(q_cov) for _ in range(world_size)]
