@@ -1,40 +1,60 @@
 # Experiment status
 
-The implementation was audited before release. Two correctness issues were found in the code used by the earlier ORBIT experiment campaign:
+The manuscript is the source of truth for the experimental protocol. A pre-release correctness audit changed the ORBIT implementation used by the earlier campaign, so the historical numerical results are retained only as development provenance and are **not release evidence**.
 
-1. the RoPE metric transported covariance with (R(+Delta)) while the causal score produced by the model is (q_i^	op R(-Delta)k_j) for (Delta=i-jge0);
-2. gradient-checkpoint recomputation updated the Q/K covariance EMA a second time.
+## Why the campaign must be rerun
 
-Both issues are corrected in the current repository and covered by regression tests.
+Two findings affect paper claims directly.
 
-## Consequence for the archived results
+First, the earlier full ORBIT path transported the local metric with $R(+\Delta)$ even though the reference model’s causal RoPE score is
 
-The earlier numerical results are retained in the development evidence store, but they are **not release evidence for the corrected implementation**.
+```math
+q_{i,f}^{\top}R_f(-\Delta)k_{j,f},
+\qquad
+\Delta=i-j\ge0.
+```
 
-The sign correction affects every result that used the full transported ORBIT metric, including:
+The corrected implementation and paper now use the same $R(-\Delta)$ convention.
 
-- the matched Muon–ORBIT confirmation;
-- full ORBIT vs no-RoPE;
-- full ORBIT vs diagonal;
+Second, gradient-checkpoint recomputation previously updated the Q/K second-moment EMA a second time. The corrected implementation suppresses statistics collection during recomputation, so the 355M cells must also be rerun under the intended EMA cadence.
+
+## Affected evidence
+
+Every result containing the old **full ORBIT** implementation must be regenerated, including:
+
+- matched Muon–ORBIT tuning and held-out confirmation;
+- full ORBIT vs identity, no-RoPE, and diagonal controls;
+- cross-configuration cells containing ORBIT;
 - longer-horizon ORBIT comparisons;
-- the 355M ORBIT comparisons;
-- the independently tuned broad ORBIT cell.
+- 355M ORBIT comparisons;
+- the broad independently selected ORBIT cell.
 
-The identity and no-RoPE control implementations do not use the signed RoPE transport, but their previously reported *paired differences against full ORBIT* still depend on the pre-fix full ORBIT runs and must be recomputed.
+Although `orbit_identity` and `orbit_norope` do not use signed RoPE transport, their previously reported paired differences against full ORBIT are not reusable.
 
-The 355M ORBIT runs also used gradient checkpointing and therefore require rerunning for the independent EMA-cadence fix.
+The corrected matched search must also be rerun rather than reusing the old ORBIT-selected hyperparameter configuration, because the corrected update rule can change the selected recipe.
+
+## Evidence hierarchy for release
+
+The final paper uses the following hierarchy:
+
+1. **Matched Muon–ORBIT confirmation** — primary mechanism estimate. Both methods receive the same deterministic candidate set; the selected configuration is frozen before held-out paired seeds.
+2. **Mechanism ablations** — full, identity, no-RoPE, and diagonal under the corrected matched ORBIT recipe.
+3. **Cross-configuration experiment** — separates update-rule behavior from recipe sensitivity.
+4. **Long-horizon and 355M cells** — secondary transfer checks only.
+5. **Broad independently selected benchmark** — exploratory context, not an isolated optimizer ranking.
+
+The unusually large historical transfer gaps and the difference between the historical broad Muon and matched Muon cells are therefore not used as evidence for a larger ORBIT mechanism effect.
 
 ## Release gate
 
-The manuscript should not restore numerical claims until the corrected campaign has produced:
+Before release, the corrected campaign must provide machine-readable per-seed records sufficient to reconstruct every reported:
 
-- a new matched Muon–ORBIT confirmation on held-out paired seeds;
-- a new mechanism ablation with full, identity, no-RoPE and diagonal variants;
-- corrected longer-horizon and 355M transfer cells;
-- per-seed result files sufficient to recompute every reported mean, paired difference and confidence interval.
+- mean validation loss;
+- paired difference;
+- confidence interval;
+- win count;
+- runtime and memory summary used in the manuscript.
 
-The broad independently tuned comparison is secondary context only. It must not be used to isolate the ORBIT mechanism because optimizer-specific recipe selection is a confound.
+The paper build is bound to the audited implementation digest and rejects the pre-audit evidence digest.
 
-## Reproducibility requirement
-
-For release, the repository should include a compact experiment harness and machine-readable per-seed results for the final corrected campaign. Paper-generation files do not need to live in this repository, but the reported numbers must be reconstructible from the released experiment records.
+The standalone repository will ship a compact experiment harness and final per-seed records, but not the manuscript-generation machinery.
