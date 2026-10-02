@@ -162,6 +162,10 @@ src/orbit/
 examples/
     quickstart.py
 
+experiments/
+    run.py
+    README.md
+
 docs/
     METHOD.md
     ARCHITECTURE.md
@@ -179,7 +183,7 @@ tests/
 
 The pre-release audit changed the implementation that generated the earlier paper campaign. Those historical numerical results are **not release evidence for the corrected method**. The corrected matched search/confirmation, ablations, and transfer cells must be rerun before numerical claims are restored to the release manuscript.
 
-The release repository will include compact experiment code and machine-readable per-seed records for the final corrected campaign without bundling the manuscript build system. See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
+The compact reproduction runner is already available in [`experiments/run.py`](experiments/run.py). Corrected per-seed records will be committed only after the post-audit campaign is complete; no pre-audit result is exposed as release evidence. See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
 
 ## Citation
 
