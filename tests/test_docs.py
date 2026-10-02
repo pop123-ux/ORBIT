@@ -10,6 +10,7 @@ DOCS = [
     ROOT / "docs" / "ARCHITECTURE.md",
     ROOT / "docs" / "EXPERIMENTS.md",
     ROOT / "docs" / "TRAINING.md",
+    ROOT / "experiments" / "README.md",
 ]
 
 

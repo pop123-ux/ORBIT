@@ -1,146 +1,60 @@
-# Experiments
+# Experiment status
 
-This document summarizes the evidence reported for ORBIT. The primary claim comes from the matched Muon comparison; the broader optimizer table and transfer runs are secondary context.
+The manuscript is the source of truth for the experimental protocol. A pre-release correctness audit changed the ORBIT implementation used by the earlier campaign, so the historical numerical results are retained only as development provenance and are **not release evidence**.
 
-## Experimental setup
+## Why the campaign must be rerun
 
-The main experiments used RoPE GPT-style decoders trained on FineWeb-Edu with a context length of 512.
+Two findings affect paper claims directly.
 
-| Model | Layers | Heads | Width | Batch | Gradient checkpointing |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 124M | 12 | 12 | 768 | 8 | No |
-| 355M | 24 | 16 | 1024 | 4 | Yes |
-
-Across the reported comparisons, the optimizer schedule used a 10% linear warmup followed by cosine decay to $0.1\times$ the peak learning rate, gradient clipping at 1.0, Muon momentum 0.95, and five Newton-Schulz iterations.
-
-## Primary result: matched Muon comparison
-
-The main question is whether ORBIT still improves on Muon when the surrounding hyperparameter recipe is held fixed.
-
-Muon and ORBIT received the same deterministic ten-candidate search grid. Both independently selected the same configuration before any held-out confirmation run was evaluated.
-
-The confirmation used ten paired seeds, 500-509, on the 124M model for 900 steps.
-
-| Statistic | Muon | ORBIT |
-| --- | ---: | ---: |
-| Mean validation loss | 5.495082 | **5.488686** |
-| Mean runtime | 802.9 s | 859.3 s |
-| Peak allocated CUDA memory | 4.710 GB | 4.700 GB |
-
-For each seed $s$, the paired effect is
+First, the earlier full ORBIT path transported the local metric with $R(+\Delta)$ even though the reference model’s causal RoPE score is
 
 ```math
-d_s
-=
-L_{\mathrm{ORBIT},s}
--
-L_{\mathrm{Muon},s}.
+q_{i,f}^{\top}R_f(-\Delta)k_{j,f},
+\qquad
+\Delta=i-j\ge0.
 ```
 
-The mean paired effect was
+The corrected implementation and paper now use the same $R(-\Delta)$ convention.
 
-```math
-\bar d=-0.006396\ \text{nats},
-```
+Second, gradient-checkpoint recomputation previously updated the Q/K second-moment EMA a second time. The corrected implementation suppresses statistics collection during recomputation, so the 355M cells must also be rerun under the intended EMA cadence.
 
-with a two-sided 95% Student-$t$ confidence interval
+## Affected evidence
 
-```math
-[-0.009838,\,-0.002955].
-```
+Every result containing the old **full ORBIT** implementation must be regenerated, including:
 
-ORBIT had the lower validation loss on **9 of 10 paired runs**.
+- matched Muon–ORBIT tuning and held-out confirmation;
+- full ORBIT vs identity, no-RoPE, and diagonal controls;
+- cross-configuration cells containing ORBIT;
+- longer-horizon ORBIT comparisons;
+- 355M ORBIT comparisons;
+- the broad independently selected ORBIT cell.
 
-This is the primary mechanism-isolated estimate in the study because optimizer and selected hyperparameters are matched.
+Although `orbit_identity` and `orbit_norope` do not use signed RoPE transport, their previously reported paired differences against full ORBIT are not reusable.
 
-## Mechanism ablations
+The corrected primary search uses Muon only. Ten deterministic 124M/900-step Muon candidates are evaluated at seed 0; the lowest-loss Muon candidate is frozen before any held-out Muon–ORBIT comparison and is then applied unchanged to both methods. ORBIT tuning outcomes do not influence the primary recipe.
 
-The extended ablation used the matched ORBIT configuration and ten new seeds, 600-609.
+## Evidence hierarchy for release
 
-| Comparison | Mean ORBIT delta | 95% CI | ORBIT wins |
-| --- | ---: | --- | ---: |
-| Full vs identity | -0.008398 | [-0.011634, -0.005163] | 9/10 |
-| Full vs no-RoPE | -0.003963 | [-0.006060, -0.001867] | 10/10 |
-| Full vs diagonal | -0.001952 | [-0.003850, -0.000054] | 8/10 |
+The final paper uses the following hierarchy:
 
-The controls isolate different parts of the method:
+1. **Matched Muon–ORBIT confirmation** — the sole primary confirmatory contrast. Muon is tuned over ten deterministic candidates; its winner is frozen and applied unchanged to Muon and ORBIT on held-out paired seeds.
+2. **Mechanism ablations** — secondary full/identity/no-RoPE/diagonal analyses under that same Muon-selected frozen recipe. Their confidence intervals are reported without multiplicity adjustment.
+3. **Cross-configuration experiment** — separates update-rule behavior from recipe sensitivity.
+4. **Long-horizon and 355M cells** — descriptive transfer checks only.
+5. **Broad independently selected benchmark** — exploratory context, not an isolated optimizer ranking.
 
-- **Identity** keeps the ORBIT statistics path but removes functional preconditioning.
-- **No-RoPE** keeps Q/K covariance conditioning but removes relative-position transport.
-- **Diagonal** retains RoPE-aware per-frequency scaling but removes off-diagonal coupling inside each $2\times2$ pair.
+The unusually large historical transfer gaps and the difference between the historical broad Muon and matched Muon cells are therefore not used as evidence for a larger ORBIT mechanism effect.
 
-The largest contrast is against the identity control. RoPE-aware transport adds a further consistent effect, while the full off-diagonal coupling contributes a smaller increment in this setting.
+## Release gate
 
-## Broader optimizer context
+Before release, the corrected campaign must provide machine-readable per-seed records sufficient to reconstruct every reported:
 
-A separate 124M/900-step benchmark compared complete independently selected optimizer recipes over five seeds each.
+- mean validation loss;
+- paired difference;
+- confidence interval;
+- win count;
+- runtime and memory summary used in the manuscript.
 
-| Optimizer | Mean validation loss |
-| --- | ---: |
-| AdamW | 5.9280 |
-| Muon | 5.6171 |
-| AdaMuon | 5.6022 |
-| NorMuon | 5.5152 |
-| **ORBIT** | **5.4769** |
-| ASTRO | 5.4741 |
+The paper build is bound to the audited implementation digest and rejects the pre-audit evidence digest.
 
-This table should not be interpreted as a pure optimizer-mechanism ranking. Each method carries its independently selected recipe, so learning-rate and regularization choices are part of the observed differences.
-
-The matched Muon experiment above is the appropriate result for isolating the ORBIT update itself.
-
-## Longer-horizon transfer
-
-At 124M and 2700 steps, two paired seeds gave the following mean ORBIT-minus-baseline differences:
-
-| Baseline | Mean delta |
-| --- | ---: |
-| Muon | -0.3759 |
-| NorMuon | -0.2543 |
-| ASTRO | -0.0587 |
-
-Both tested seeds favored ORBIT in each of these comparisons.
-
-Because $n=2$, this is transfer evidence rather than a high-powered statistical estimate.
-
-## 355M transfer
-
-At 355M and 900 steps, again with two seeds:
-
-| Baseline | Mean ORBIT-minus-baseline delta |
-| --- | ---: |
-| Muon | -0.2126 |
-| NorMuon | -0.1896 |
-| ASTRO | +0.0297 |
-
-Both tested seeds favored ORBIT over Muon and NorMuon. The ASTRO comparison was mixed, with one seed favoring each method.
-
-The 355M run uses batch size 4 rather than 8 and therefore a different sampled-token budget per optimizer step. It demonstrates transfer to the larger tested model; it is **not** a controlled scaling law.
-
-## Cost
-
-In the primary 124M matched setting, mean wall-clock time increased from 802.9 s to 859.3 s, approximately a 7% training-time overhead.
-
-Peak allocated CUDA memory was effectively unchanged in the recorded runs.
-
-ORBIT is an optimizer-only modification, so the covariance statistics and metric transforms are discarded after training. The inference graph is unchanged.
-
-## Statistical interpretation
-
-The primary estimand is the paired validation-loss difference
-
-```math
-L_{\mathrm{ORBIT}}-L_{\mathrm{baseline}}.
-```
-
-Negative values favor ORBIT.
-
-Confidence intervals reported for the matched and ablation experiments are two-sided Student-$t$ intervals over the paired per-seed differences.
-
-The evidence is intentionally separated into:
-
-1. **matched confirmation** — primary mechanism estimate;
-2. **ablation evidence** — mechanism attribution;
-3. **long-horizon / 355M transfer** — secondary transfer checks;
-4. **independently tuned benchmark** — practical context, not a matched causal comparison.
-
-This separation avoids treating hyperparameter-recipe effects as if they were entirely caused by the optimizer update rule.
+The standalone reproduction path is split deliberately: [`experiments/matched.py`](../experiments/matched.py) generates and freezes the Muon-selected primary recipe, while [`experiments/run.py`](../experiments/run.py) executes individual training/evaluation runs. Neither script contains manuscript-generation code or JSONL campaign machinery. Corrected per-seed records will be committed under `results/corrected/` only after the audited campaign completes.
