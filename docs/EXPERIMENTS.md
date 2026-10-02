@@ -57,4 +57,4 @@ Before release, the corrected campaign must provide machine-readable per-seed re
 
 The paper build is bound to the audited implementation digest and rejects the pre-audit evidence digest.
 
-The standalone repository will ship a compact experiment harness and final per-seed records, but not the manuscript-generation machinery.
+The standalone reproduction path is [`experiments/run.py`](../experiments/run.py). It reproduces the primary Muon–ORBIT and ORBIT-ablation protocol without manuscript-generation code or JSONL campaign machinery. Corrected per-seed records will be committed under `results/corrected/` only after the audited campaign completes.
