@@ -1,120 +1,108 @@
 # Method
 
-## Causal RoPE geometry
+This document follows the paper’s mathematical convention exactly.
 
-For a query at position $i$ attending to a causal key at position $j\le i$, define the non-negative distance
+## Causal RoPE score
 
-```math
-\Delta=i-j.
-```
-
-The implementation rotates each unrotated pair by its absolute token position. Therefore
+For a query at position $i$ and a causal key at $j\le i$, define
 
 ```math
-(R(i)q_i)^\top(R(j)k_j)
-=
-q_i^\top R(i)^\top R(j)k_j
-=
-q_i^\top R(j-i)k_j
-=
-q_i^\top R(-\Delta)k_j.
+\Delta=i-j\ge0.
 ```
 
-For one RoPE frequency pair $f$,
+The implementation applies $R_f(i)$ to the query pair and $R_f(j)$ to the key pair. Since RoPE rotations are orthogonal,
 
 ```math
-s_{ij,f}
+(R_f(i)q_{i,f})^\top(R_f(j)k_{j,f})
 =
-q_{i,f}^{\top}R_f(-\Delta)k_{j,f}.
+q_{i,f}^\top R_f(i)^\top R_f(j)k_{j,f}
+=
+q_{i,f}^\top R_f(-\Delta)k_{j,f}.
 ```
 
-A perturbation $\delta q_f$ gives
+For a perturbation $\delta q_f$,
 
 ```math
 \delta s_f
 =
-\delta q_f^\top R_f(-\Delta)k_f,
+\delta q_f^\top R_f(-\Delta)k_f.
 ```
 
-so
+Therefore
 
 ```math
 \mathbb E[(\delta s_f)^2]
 =
 \delta q_f^\top
 \mathbb E\!\left[
-R_f(-\Delta)C_{K,f}R_f(-\Delta)^\top
+R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
 \right]
-\delta q_f.
+\delta q_f,
 ```
 
-This yields
+where
+
+```math
+S_{K,f}=\mathbb E[k_fk_f^\top].
+```
+
+The symmetric key-side expression follows from perturbing $k_f$.
+
+## Local Q/K metric
+
+ORBIT maintains the uncentered second moments
+
+```math
+S_{Q,f}=\mathbb E[q_fq_f^\top],
+\qquad
+S_{K,f}=\mathbb E[k_fk_f^\top],
+```
+
+and defines
 
 ```math
 M_{Q,f}
 =
-\mathbb E_{\Delta}
+\mathbb E_\Delta
 \left[
-R_f(-\Delta)C_{K,f}R_f(-\Delta)^\top
+R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
 \right],
 ```
-
-and symmetrically
 
 ```math
 M_{K,f}
 =
-\mathbb E_{\Delta}
+\mathbb E_\Delta
 \left[
-R_f(-\Delta)^\top C_{Q,f}R_f(-\Delta)
+R_f(-\Delta)^\top S_{Q,f}R_f(-\Delta)
 \right].
 ```
 
-The implementation approximates the relative-position expectation over
+The relative-position expectation is approximated by a uniform average over the fixed log-spaced causal-distance grid
 
 ```math
 \mathcal D=\{1,2,4,8,16,32,64,128\}.
 ```
 
-Negative values are rejected by the API because `deltas` are distances $i-j$, not signed offsets.
+This grid is a design approximation. It is not an estimate of the empirical token-pair distance distribution.
 
-## Q/K statistics
-
-For each head and RoPE frequency pair, ORBIT maintains unrotated $2\times2$ covariances
+The second moments use an EMA,
 
 ```math
-C_{Q,f}=\mathbb E[q_fq_f^\top],
-\qquad
-C_{K,f}=\mathbb E[k_fk_f^\top].
-```
-
-The running update is
-
-```math
-C_t
+S_t
 =
-\beta C_{t-1}
+\beta S_{t-1}
 +
-(1-\beta)C_{\mathrm{batch}},
+(1-\beta)S_{\mathrm{batch}},
 \qquad
 \beta=0.95,
 ```
 
-with the first observed batch used directly.
+with the first observation used directly.
 
-The sufficient statistics are globally reduced before the EMA when `torch.distributed` is initialized, so every DDP replica uses the same metric. Gradient-checkpoint recomputation explicitly suspends statistics collection; one logical forward/backward contributes one covariance update, not two.
+## Inverse-square-root preconditioning
 
-The covariance buffers and observation counter are persistent entries in the model state dict, so checkpoint/resume preserves the EMA exactly.
-
-## Preconditioning
-
-Muon first provides candidate Q/K matrix updates $U_Q,U_K$. ORBIT reshapes each candidate to
-
-```text
-[head, frequency, 2, input_dimension]
-```
-
-and applies
+Let $U_Q,U_K$ be the Muon candidate updates. ORBIT acts on each two-row RoPE pair:
 
 ```math
 \widehat U_Q=M_Q^{-p/2}U_Q,
@@ -122,7 +110,9 @@ and applies
 \widehat U_K=M_K^{-p/2}U_K.
 ```
 
-The default $p=1$ gives $M^{-1/2}$. For a symmetric positive-definite metric
+The default $p=1$ gives $M^{-1/2}$.
+
+For the regularized effective metric
 
 ```math
 M=V\Lambda V^\top,
@@ -131,22 +121,22 @@ M=V\Lambda V^\top,
 the transform is
 
 ```math
-M^{-1/2}=V\Lambda^{-1/2}V^\top.
+T=M^{-1/2}=V\Lambda^{-1/2}V^\top.
 ```
 
-It whitens the local quadratic metric:
+It satisfies
 
 ```math
-(M^{-1/2}u)^\top M(M^{-1/2}u)
-=
-u^\top u.
+T^\top M T=I.
 ```
 
-Thus directions with larger functional sensitivity are attenuated more strongly while preserving the geometry of the candidate in the whitened coordinates.
+Thus the local quadratic metric is whitened: directions with larger functional sensitivity are attenuated more strongly. This metric is local to the pre-softmax rotary Q/K interaction; it is not a full Fisher matrix, Hessian, or exact natural-gradient metric.
 
-## Joint Q/K norm restoration
+The implementation evaluates the symmetric $2\times2$ inverse power analytically, adds $10^{-5}I$, and caps the effective condition number at 100.
 
-Preconditioning changes both direction and magnitude. ORBIT isolates the geometric change by using one shared restoration factor
+## Joint Frobenius restoration
+
+Preconditioning changes both geometry and magnitude. ORBIT uses one shared factor
 
 ```math
 \rho
@@ -157,18 +147,18 @@ Preconditioning changes both direction and magnitude. ORBIT isolates the geometr
 }{
 \lVert\widehat U_Q\rVert_F^2+\lVert\widehat U_K\rVert_F^2
 }
-}.
+},
 ```
 
-The final updates are
+then
 
 ```math
 \widetilde U_Q=\rho\widehat U_Q,
 \qquad
-\widetilde U_K=\rho\widehat U_K,
+\widetilde U_K=\rho\widehat U_K.
 ```
 
-which guarantees
+By construction,
 
 ```math
 \lVert\widetilde U_Q\rVert_F^2+
@@ -178,23 +168,15 @@ which guarantees
 \lVert U_K\rVert_F^2.
 ```
 
-A shared factor preserves ORBIT's ability to redistribute the Q/K budget between the two coupled projections.
+Since
 
-## Numerical $2\times2$ inverse power
-
-`inverse_metric_power` uses the analytic spectrum of a symmetric $2\times2$ matrix rather than a general batched eigensolver. It symmetrizes the input, scale-normalizes it, floors the spectrum, caps the effective condition number, handles repeated eigenvalues isotropically, and falls back to identity for a non-finite local metric.
-
-Default numerical settings:
-
-```text
-functional power      1.0
-metric epsilon        1e-5
-condition cap         100
-Q/K covariance EMA    0.95
-RoPE distances        1,2,4,8,16,32,64,128
+```math
+\lVert U\rVert_F=\lVert\operatorname{vec}(U)\rVert_2,
 ```
 
-## Ablation variants
+the restoration fixes the aggregate Euclidean parameter-space magnitude of the Q/K step while leaving the metric free to reshape the coupled update.
+
+## Variants
 
 ```python
 Orbit(model, variant="orbit")
@@ -204,6 +186,6 @@ Orbit(model, variant="orbit_identity")
 ```
 
 - `orbit`: full causal RoPE-transported metric.
-- `orbit_norope`: opposite-side covariance without RoPE transport.
-- `orbit_diag`: diagonalized transported metric.
-- `orbit_identity`: statistics path retained, functional preconditioner disabled.
+- `orbit_norope`: opposite-side second moment without RoPE transport.
+- `orbit_diag`: transported metric with off-diagonal coupling removed.
+- `orbit_identity`: second-moment path retained, functional preconditioner disabled.
