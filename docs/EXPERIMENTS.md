@@ -31,14 +31,14 @@ Every result containing the old **full ORBIT** implementation must be regenerate
 
 Although `orbit_identity` and `orbit_norope` do not use signed RoPE transport, their previously reported paired differences against full ORBIT are not reusable.
 
-The corrected matched search must also be rerun rather than reusing the old ORBIT-selected hyperparameter configuration, because the corrected update rule can change the selected recipe.
+The corrected primary search uses Muon only. Ten deterministic 124M/900-step Muon candidates are evaluated at seed 0; the lowest-loss Muon candidate is frozen before any held-out Muon–ORBIT comparison and is then applied unchanged to both methods. ORBIT tuning outcomes do not influence the primary recipe.
 
 ## Evidence hierarchy for release
 
 The final paper uses the following hierarchy:
 
-1. **Matched Muon–ORBIT confirmation** — primary mechanism estimate. Both methods receive the same deterministic candidate set; the selected configuration is frozen before held-out paired seeds.
-2. **Mechanism ablations** — full, identity, no-RoPE, and diagonal under the corrected matched ORBIT recipe.
+1. **Matched Muon–ORBIT confirmation** — primary mechanism estimate. Muon is tuned over ten deterministic candidates; its winner is frozen and applied unchanged to Muon and ORBIT on held-out paired seeds.
+2. **Mechanism ablations** — full, identity, no-RoPE, and diagonal under that same Muon-selected frozen recipe.
 3. **Cross-configuration experiment** — separates update-rule behavior from recipe sensitivity.
 4. **Long-horizon and 355M cells** — secondary transfer checks only.
 5. **Broad independently selected benchmark** — exploratory context, not an isolated optimizer ranking.
@@ -57,4 +57,4 @@ Before release, the corrected campaign must provide machine-readable per-seed re
 
 The paper build is bound to the audited implementation digest and rejects the pre-audit evidence digest.
 
-The standalone reproduction path is [`experiments/run.py`](../experiments/run.py). It reproduces the primary Muon–ORBIT and ORBIT-ablation protocol without manuscript-generation code or JSONL campaign machinery. Corrected per-seed records will be committed under `results/corrected/` only after the audited campaign completes.
+The standalone reproduction path is split deliberately: [`experiments/matched.py`](../experiments/matched.py) generates and freezes the Muon-selected primary recipe, while [`experiments/run.py`](../experiments/run.py) executes individual training/evaluation runs. Neither script contains manuscript-generation code or JSONL campaign machinery. Corrected per-seed records will be committed under `results/corrected/` only after the audited campaign completes.
