@@ -305,18 +305,18 @@ def run(args) -> dict:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--optimizer", choices=OPTIMIZERS, required=True)
+    p.add_argument("--optimizer", choices=OPTIMIZERS)
     p.add_argument("--size", choices=tuple(SIZES), default="124M")
     p.add_argument("--steps", type=int, default=900)
-    p.add_argument("--seed", type=int, required=True)
-    p.add_argument("--lr", type=float, required=True)
-    p.add_argument("--scalar-lr-mult", type=float, required=True)
-    p.add_argument("--weight-decay", type=float, required=True)
+    p.add_argument("--seed", type=int)
+    p.add_argument("--lr", type=float)
+    p.add_argument("--scalar-lr-mult", type=float)
+    p.add_argument("--weight-decay", type=float)
     p.add_argument("--seq", type=int, default=512)
     p.add_argument("--log-every", type=int, default=25)
     p.add_argument("--device", default="auto")
     p.add_argument("--token-cache", type=Path, required=True)
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--output", type=Path)
     p.add_argument("--prepare-data", action="store_true")
     return p.parse_args()
 
@@ -327,6 +327,18 @@ def main() -> None:
         prepare_token_cache(args.token_cache)
         print(args.token_cache)
         return
+
+    required = {
+        "--optimizer": args.optimizer,
+        "--seed": args.seed,
+        "--lr": args.lr,
+        "--scalar-lr-mult": args.scalar_lr_mult,
+        "--weight-decay": args.weight_decay,
+        "--output": args.output,
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        raise SystemExit("missing required run arguments: " + ", ".join(missing))
 
     record = run(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
