@@ -25,6 +25,10 @@ dependencies = ["torch>=2.2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.4"]
+experiments = [
+  "datasets>=3,<5",
+  "transformers>=4.56,<5",
+]
 
 [project.urls]
 Repository = "https://github.com/pop123-ux/ORBIT"
