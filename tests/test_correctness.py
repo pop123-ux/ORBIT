@@ -131,6 +131,24 @@ def test_standard_scheduler_scales_matrix_and_auxiliary_learning_rates(optimizer
     assert optimizer.auxiliary_lr() == pytest.approx(aux_before * 0.1)
 
 
+
+
+@pytest.mark.parametrize("optimizer_cls", [Orbit, Muon])
+def test_legacy_optimizer_checkpoint_migrates_auxiliary_lr_metadata(optimizer_cls):
+    model = OrbitGPT(tiny_config())
+    optimizer = optimizer_cls(model, lr=0.02, adamw_lr=0.004)
+    state = optimizer.state_dict()
+    group = state["param_groups"][0]
+    ratio = group.pop("adamw_lr_ratio")
+    group["adamw_lr"] = group["lr"] * ratio
+
+    restored_model = OrbitGPT(tiny_config())
+    restored = optimizer_cls(restored_model, lr=0.02, adamw_lr=0.004)
+    restored.load_state_dict(state)
+
+    assert restored.auxiliary_lr() == pytest.approx(0.004)
+
+
 def _ddp_worker(rank: int, world_size: int, init_file: str) -> None:
     dist.init_process_group(
         "gloo",
