@@ -246,6 +246,11 @@ def _ddp_worker(rank: int, world_size: int, port: int) -> None:
             assert torch.allclose(weights[0], other, atol=1e-7, rtol=1e-7)
         for other in moments[1:]:
             assert torch.allclose(moments[0], other, atol=1e-7, rtol=1e-7)
+
+        # Let every rank finish collective work before DDP/process-group teardown.
+        # Newer Gloo builds can otherwise abort a worker after the assertions pass.
+        dist.barrier()
+        del ddp
     finally:
         dist.destroy_process_group()
 
