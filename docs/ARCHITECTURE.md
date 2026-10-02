@@ -81,6 +81,8 @@ The reference model uses non-reentrant checkpointing. The original forward updat
 5. left-multiplies each two-row RoPE pair by the local transform;
 6. applies one shared Q/K Frobenius restoration factor.
 
+This is an output-side left preconditioner. ORBIT does not construct the full parameter-space pullback through the Q/K input activation.
+
 Other hidden two-dimensional matrices stay on the matched spectral path.
 
 ## Learning-rate coupling
