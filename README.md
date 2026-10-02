@@ -164,6 +164,7 @@ examples/
 
 experiments/
     run.py
+    matched.py
     README.md
 
 docs/
@@ -181,9 +182,9 @@ tests/
 
 ## Experiment status
 
-The pre-release audit changed the implementation that generated the earlier paper campaign. Those historical numerical results are **not release evidence for the corrected method**. The corrected matched search/confirmation, ablations, and transfer cells must be rerun before numerical claims are restored to the release manuscript.
+The pre-release audit changed the implementation that generated the earlier paper campaign. Those historical numerical results are **not release evidence for the corrected method**.
 
-The compact reproduction runner is already available in [`experiments/run.py`](experiments/run.py). Corrected per-seed records will be committed only after the post-audit campaign is complete; no pre-audit result is exposed as release evidence. See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
+The corrected primary protocol is baseline-selected: Muon alone is tuned over ten deterministic 124M/900-step candidates, its lowest-loss recipe is frozen, and that same recipe is then used for the held-out Muon–ORBIT comparison and ORBIT ablations. [`experiments/matched.py`](experiments/matched.py) reproduces the candidate grid and selection rule; [`experiments/run.py`](experiments/run.py) executes individual runs. Corrected per-seed records will be committed only after the post-audit campaign is complete. See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
 
 ## Citation
 
