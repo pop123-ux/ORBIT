@@ -50,6 +50,7 @@ def source_digest() -> str:
         root / "src" / "orbit" / "model.py",
         root / "src" / "orbit" / "optimizer.py",
         root / "src" / "orbit" / "baselines.py",
+        root / "experiments" / "matched.py",
     ]
     h = hashlib.sha256()
     for path in paths:
