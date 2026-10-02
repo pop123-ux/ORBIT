@@ -35,8 +35,8 @@ def test_orbit_optimizer_enables_functional_statistics():
     out.loss.backward()
     for block in model.blocks:
         assert int(block.attn.orbit_stats_seen) > 0
-        assert torch.isfinite(block.attn.orbit_q_second_moment).all()
-        assert torch.isfinite(block.attn.orbit_k_second_moment).all()
+        assert torch.isfinite(block.attn.orbit_q_cov).all()
+        assert torch.isfinite(block.attn.orbit_k_cov).all()
 
 
 def test_rope_metric_is_spd_and_position_sensitive():
@@ -44,8 +44,8 @@ def test_rope_metric_is_spd_and_position_sensitive():
     attn = model.blocks[0].attn
     with torch.no_grad():
         base = torch.tensor([[5.0, 1.2], [1.2, 0.8]])
-        attn.orbit_k_second_moment.copy_(base.view(1, 1, 2, 2).repeat(attn.n_head, attn.n_freq, 1, 1))
-        attn.orbit_q_second_moment.copy_(base.flip(0).flip(1).view(1, 1, 2, 2).repeat(attn.n_head, attn.n_freq, 1, 1))
+        attn.orbit_k_cov.copy_(base.view(1, 1, 2, 2).repeat(attn.n_head, attn.n_freq, 1, 1))
+        attn.orbit_q_cov.copy_(base.flip(0).flip(1).view(1, 1, 2, 2).repeat(attn.n_head, attn.n_freq, 1, 1))
     mq0, _ = attn.orbit_metrics((0,), rotate=True)
     mq8, _ = attn.orbit_metrics((8,), rotate=True)
     assert torch.linalg.eigvalsh(mq0).min() > 0

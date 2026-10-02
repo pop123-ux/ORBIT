@@ -26,16 +26,12 @@ class Muon(torch.optim.Optimizer):
         adamw_betas: tuple[float, float] = (0.9, 0.95),
         eps: float = 1e-8,
     ) -> None:
-        if lr < 0.0 or adamw_lr < 0.0:
-            raise ValueError("learning rates must be non-negative")
-        if lr == 0.0 and adamw_lr != 0.0:
-            raise ValueError("adamw_lr requires lr > 0 so scheduler scaling is well-defined")
         params = list(model.parameters())
         super().__init__(
             params,
             dict(
                 lr=lr,
-                adamw_lr_ratio=(adamw_lr / lr) if lr else 0.0,
+                adamw_lr=adamw_lr,
                 weight_decay=weight_decay,
                 momentum=momentum,
                 ns_steps=ns_steps,
@@ -79,7 +75,6 @@ class Muon(torch.optim.Optimizer):
                 candidates[id(param)] = self._spectral_candidate(param, group)
 
         beta1, beta2 = group["betas"]
-        aux_lr = group["lr"] * group["adamw_lr_ratio"]
         for param in group["params"]:
             if param.grad is None:
                 continue
@@ -106,22 +101,6 @@ class Muon(torch.optim.Optimizer):
                 (exp_avg_sq / (1.0 - beta2**step)).sqrt().add_(group["eps"])
             )
             if role == "aux_decay" and group["weight_decay"]:
-                param.mul_(1.0 - aux_lr * group["weight_decay"])
-            param.add_(update, alpha=-aux_lr)
+                param.mul_(1.0 - group["adamw_lr"] * group["weight_decay"])
+            param.add_(update, alpha=-group["adamw_lr"])
         return loss
-
-    def auxiliary_lr(self) -> float:
-        group = self.param_groups[0]
-        return float(group["lr"] * group["adamw_lr_ratio"])
-
-    def load_state_dict(self, state_dict):  # type: ignore[override]
-        super().load_state_dict(state_dict)
-        for group in self.param_groups:
-            if "adamw_lr_ratio" not in group:
-                legacy_aux = group.pop("adamw_lr", None)
-                if legacy_aux is None:
-                    raise KeyError("optimizer checkpoint is missing auxiliary LR metadata")
-                lr = float(group["lr"])
-                if lr == 0.0 and float(legacy_aux) != 0.0:
-                    raise ValueError("cannot recover auxiliary LR ratio from zero matrix LR")
-                group["adamw_lr_ratio"] = (float(legacy_aux) / lr) if lr else 0.0

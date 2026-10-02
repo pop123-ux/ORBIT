@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from collections import defaultdict
 from typing import Iterable
 
 import torch
@@ -135,16 +137,12 @@ class Orbit(torch.optim.Optimizer):
     ) -> None:
         if variant not in self.VALID_VARIANTS:
             raise ValueError(f"unknown ORBIT variant {variant!r}")
-        if lr < 0.0 or adamw_lr < 0.0:
-            raise ValueError("learning rates must be non-negative")
-        if lr == 0.0 and adamw_lr != 0.0:
-            raise ValueError("adamw_lr requires lr > 0 so scheduler scaling is well-defined")
         params = list(model.parameters())
         super().__init__(
             params,
             dict(
                 lr=lr,
-                adamw_lr_ratio=(adamw_lr / lr) if lr else 0.0,
+                adamw_lr=adamw_lr,
                 weight_decay=weight_decay,
                 momentum=momentum,
                 ns_steps=ns_steps,
@@ -164,7 +162,7 @@ class Orbit(torch.optim.Optimizer):
         self.variant = variant
         self._meta: dict[int, str] = {}
         self._pairs = []
-        self._diagnostic_sums: dict[str, torch.Tensor] = {}
+        self._diagnostic_sums: defaultdict[str, float] = defaultdict(float)
         self._diagnostic_count = 0
 
         excluded = {id(model.wte.weight), id(model.lm_head.weight)}
@@ -228,16 +226,9 @@ class Orbit(torch.optim.Optimizer):
         restore = before / after
         qv.mul_(restore)
         kv.mul_(restore)
-        diagnostic_values = {
-            "metric_condition_q": cq.mean().detach(),
-            "metric_condition_k": ck.mean().detach(),
-            "joint_restore": restore.detach(),
-        }
-        for key, value in diagnostic_values.items():
-            if key not in self._diagnostic_sums:
-                self._diagnostic_sums[key] = value.clone()
-            else:
-                self._diagnostic_sums[key].add_(value)
+        self._diagnostic_sums["metric_condition_q"] += float(cq.mean().cpu())
+        self._diagnostic_sums["metric_condition_k"] += float(ck.mean().cpu())
+        self._diagnostic_sums["joint_restore"] += float(restore.cpu())
         self._diagnostic_count += 1
         return qv.reshape_as(q_update).to(q_update.dtype), kv.reshape_as(k_update).to(k_update.dtype)
 
@@ -263,7 +254,6 @@ class Orbit(torch.optim.Optimizer):
             )
 
         beta1, beta2 = group["betas"]
-        aux_lr = group["lr"] * group["adamw_lr_ratio"]
         for param in group["params"]:
             if param.grad is None:
                 continue
@@ -290,30 +280,14 @@ class Orbit(torch.optim.Optimizer):
                 (exp_avg_sq / (1.0 - beta2**step)).sqrt().add_(group["eps"])
             )
             if role == "aux_decay" and group["weight_decay"]:
-                param.mul_(1.0 - aux_lr * group["weight_decay"])
-            param.add_(update, alpha=-aux_lr)
+                param.mul_(1.0 - group["adamw_lr"] * group["weight_decay"])
+            param.add_(update, alpha=-group["adamw_lr"])
         return loss
-
-    def auxiliary_lr(self) -> float:
-        group = self.param_groups[0]
-        return float(group["lr"] * group["adamw_lr_ratio"])
-
-    def load_state_dict(self, state_dict):  # type: ignore[override]
-        super().load_state_dict(state_dict)
-        for group in self.param_groups:
-            if "adamw_lr_ratio" not in group:
-                legacy_aux = group.pop("adamw_lr", None)
-                if legacy_aux is None:
-                    raise KeyError("optimizer checkpoint is missing auxiliary LR metadata")
-                lr = float(group["lr"])
-                if lr == 0.0 and float(legacy_aux) != 0.0:
-                    raise ValueError("cannot recover auxiliary LR ratio from zero matrix LR")
-                group["adamw_lr_ratio"] = (float(legacy_aux) / lr) if lr else 0.0
 
     def diagnostics(self) -> dict[str, float]:
         if not self._diagnostic_count:
             return {}
         return {
-            key: float(value.detach().cpu()) / self._diagnostic_count
+            key: value / self._diagnostic_count
             for key, value in sorted(self._diagnostic_sums.items())
         }
