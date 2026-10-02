@@ -22,6 +22,11 @@ def test_matched_candidate_grid_is_deterministic_and_unique():
     assert len(first) == 10
     assert len({json.dumps(x["config"], sort_keys=True) for x in first}) == 10
     assert [x["config_id"] for x in first] == [f"shared-{i:02d}" for i in range(10)]
+    assert first[0]["config"] == {
+        "lr": 0.002510810677061948,
+        "weight_decay": 0.09862407335797245,
+        "scalar_lr_mult": 0.028701450292747916,
+    }
 
     for item in first:
         cfg = item["config"]
