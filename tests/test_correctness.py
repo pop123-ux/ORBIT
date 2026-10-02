@@ -6,7 +6,6 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from orbit import Muon, Orbit, OrbitGPT, OrbitGPTConfig
 from orbit.model import RotaryAttention
@@ -225,13 +224,21 @@ def _ddp_worker(rank: int, world_size: int, port: int) -> None:
         config = tiny_config()
         model = OrbitGPT(config)
         optimizer = Orbit(model, lr=0.01, adamw_lr=1e-3)
-        ddp = DDP(model, broadcast_buffers=False)
 
+        # Reproduce DDP's relevant invariant directly: each rank sees different data,
+        # gradients are averaged before the optimizer step, and ORBIT must also make
+        # its forward second-moment state identical across ranks. Avoiding the DDP
+        # wrapper keeps this regression focused on ORBIT and avoids backend-specific
+        # DDP destructor races in short-lived CI worker processes.
         for step in range(3):
             generator = torch.Generator().manual_seed(10_000 + 100 * step + rank)
             x = torch.randint(0, config.vocab_size, (2, 12), generator=generator)
-            loss = ddp(x, labels=x).loss
+            loss = model(x, labels=x).loss
             loss.backward()
+            for param in model.parameters():
+                if param.grad is not None:
+                    dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                    param.grad.div_(world_size)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
 
@@ -247,16 +254,13 @@ def _ddp_worker(rank: int, world_size: int, port: int) -> None:
         for other in moments[1:]:
             assert torch.allclose(moments[0], other, atol=1e-7, rtol=1e-7)
 
-        # Let every rank finish collective work before DDP/process-group teardown.
-        # Newer Gloo builds can otherwise abort a worker after the assertions pass.
         dist.barrier()
-        del ddp
     finally:
         dist.destroy_process_group()
 
 
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed unavailable")
-def test_ddp_keeps_orbit_statistics_and_weights_synchronized():
+def test_distributed_ddp_equivalent_sync_keeps_orbit_state_and_weights_identical():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
