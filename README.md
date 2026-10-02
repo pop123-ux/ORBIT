@@ -79,7 +79,7 @@ then uses one shared scalar $\rho$ so that
 \lVert U_K\rVert_F^2.
 ```
 
-The inverse square root whitens the local quadratic metric; the joint Frobenius restoration fixes the aggregate Q/K parameter-space step magnitude. The derivation is in [`docs/METHOD.md`](docs/METHOD.md).
+These $2\times2$ metrics are output-coordinate factors used as left preconditioners; they are not complete parameter-space pullbacks and deliberately omit the input-activation factor that an exact pullback would contain. The inverse square root whitens this local quadratic metric, while the joint Frobenius restoration fixes the aggregate Q/K parameter-space step magnitude. The derivation is in [`docs/METHOD.md`](docs/METHOD.md).
 
 ## Install
 
