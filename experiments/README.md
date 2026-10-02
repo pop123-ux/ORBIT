@@ -13,13 +13,7 @@ Build the exact fixed FineWeb-Edu token pool used by the paper:
 ```bash
 python experiments/run.py \
   --prepare-data \
-  --optimizer orbit \
-  --seed 0 \
-  --lr 0.02 \
-  --scalar-lr-mult 0.1 \
-  --weight-decay 0.05 \
-  --token-cache /path/to/fineweb_edu_v1.0.0_12p4m.pt \
-  --output /tmp/unused.json
+  --token-cache /path/to/fineweb_edu_v1.0.0_12p4m.pt
 ```
 
 The cache contains 12.4M GPT-2 tokens from `HuggingFaceFW/fineweb-edu`, configuration `sample-10BT`, revision `v1.0.0`: 400k validation tokens followed by a 12M-token training pool.
