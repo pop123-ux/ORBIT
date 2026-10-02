@@ -86,6 +86,14 @@ The relative-position expectation is approximated by a uniform average over the 
 
 This grid is a design approximation. It is not an estimate of the empirical token-pair distance distribution.
 
+The matrices $M_{Q,f}$ and $M_{K,f}$ are output-coordinate factors, not complete parameter-space pullbacks. For example,
+
+```math
+\delta q_f=\delta W_{Q,f}x,
+```
+
+so an exact quadratic metric on $\delta W_{Q,f}$ would also contain statistics of the input activation $x$. ORBIT deliberately keeps only the frequency-local $2\times2$ output-side factor and applies it as a left preconditioner. This is the local approximation evaluated by the paper.
+
 The second moments use an EMA,
 
 ```math
