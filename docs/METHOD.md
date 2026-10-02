@@ -1,204 +1,164 @@
 # Method
 
-ORBIT modifies only the query/key part of a Muon step while leaving the model architecture unchanged.
+This document follows the paper’s mathematical convention exactly.
 
-## Rotary query-key interaction
+## Causal RoPE score
 
-For one attention head and one two-dimensional RoPE frequency pair $f$, the pre-softmax score contribution is
+For a query at position $i$ and a causal key at $j\le i$, define
 
 ```math
-s_{ij,f}
+\Delta=i-j\ge0.
+```
+
+The implementation applies $R_f(i)$ to the query pair and $R_f(j)$ to the key pair. Since RoPE rotations are orthogonal,
+
+```math
+(R_f(i)q_{i,f})^\top(R_f(j)k_{j,f})
 =
-q_{i,f}^{\top}
-R_f(i-j)
-k_{j,f}.
+q_{i,f}^\top R_f(i)^\top R_f(j)k_{j,f}
+=
+q_{i,f}^\top R_f(-\Delta)k_{j,f}.
 ```
 
-Writing the relative displacement as
-
-```math
-\Delta=i-j,
-```
-
-the score becomes
-
-```math
-s_f=q_f^\top R_f(\Delta)k_f.
-```
-
-A small perturbation $\delta q_f$ changes the score by
+For a perturbation $\delta q_f$,
 
 ```math
 \delta s_f
 =
-\delta q_f^\top R_f(\Delta)k_f.
+\delta q_f^\top R_f(-\Delta)k_f.
 ```
 
-The squared functional movement induced by that query perturbation is
+Therefore
 
 ```math
-(\delta s_f)^2
+\mathbb E[(\delta s_f)^2]
 =
 \delta q_f^\top
-R_f(\Delta)
-k_fk_f^\top
-R_f(\Delta)^\top
-\delta q_f.
-```
-
-Taking an expectation over keys motivates the local query metric
-
-```math
-M_{Q,f}
-=
-\mathbb E_{\Delta}
-\left[
-R_f(\Delta)
-C_{K,f}
-R_f(\Delta)^\top
-\right],
+\mathbb E\!\left[
+R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
+\right]
+\delta q_f,
 ```
 
 where
 
 ```math
-C_{K,f}=\mathbb E[k_fk_f^\top].
+S_{K,f}=\mathbb E[k_fk_f^\top].
 ```
 
-The key-side expression follows symmetrically:
+The symmetric key-side expression follows from perturbing $k_f$.
+
+## Local Q/K metric
+
+ORBIT maintains the uncentered second moments
 
 ```math
-M_{K,f}
-=
-\mathbb E_{\Delta}
-\left[
-R_f(\Delta)^\top
-C_{Q,f}
-R_f(\Delta)
-\right],
+S_{Q,f}=\mathbb E[q_fq_f^\top],
+\qquad
+S_{K,f}=\mathbb E[k_fk_f^\top],
 ```
 
-with
-
-```math
-C_{Q,f}=\mathbb E[q_fq_f^\top].
-```
-
-This is why ORBIT conditions Query using Key statistics and Key using Query statistics.
-
-## Running statistics
-
-The implementation maintains exponential-moving-average covariance matrices for the unrotated Q/K pairs:
-
-```math
-C_t
-=
-\beta C_{t-1}
-+
-(1-\beta)C_{\mathrm{batch}},
-```
-
-with default
-
-```math
-\beta=0.95.
-```
-
-RoPE acts on coordinate pairs, so the required statistics are only $2\times2$ matrices for each head and frequency pair.
-
-The relative-position expectation is approximated over
-
-```math
-\mathcal D
-=
-\{1,2,4,8,16,32,64,128\}.
-```
-
-Thus
+and defines
 
 ```math
 M_{Q,f}
 =
-\frac{1}{|\mathcal D|}
-\sum_{\Delta\in\mathcal D}
-R_f(\Delta)
-C_{K,f}
-R_f(\Delta)^\top,
+\mathbb E_\Delta
+\left[
+R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
+\right],
 ```
 
 ```math
 M_{K,f}
 =
-\frac{1}{|\mathcal D|}
-\sum_{\Delta\in\mathcal D}
-R_f(\Delta)^\top
-C_{Q,f}
-R_f(\Delta).
+\mathbb E_\Delta
+\left[
+R_f(-\Delta)^\top S_{Q,f}R_f(-\Delta)
+\right].
 ```
 
-## Muon candidate update
-
-ORBIT does not replace the matrix update used by Muon.
-
-For a matrix gradient $G_t$, the implementation first forms a momentum-smoothed look-ahead direction and applies the same five-step quintic Newton-Schulz polar iteration used by the Muon path.
-
-Conceptually, if
+The relative-position expectation is approximated by a uniform average over the fixed log-spaced causal-distance grid
 
 ```math
-G=U\Sigma V^\top,
+\mathcal D=\{1,2,4,8,16,32,64,128\}.
 ```
 
-the polar direction is related to
+This grid is a design approximation. It is not an estimate of the empirical token-pair distance distribution.
+
+The matrices $M_{Q,f}$ and $M_{K,f}$ are output-coordinate factors, not complete parameter-space pullbacks. For example,
 
 ```math
-UV^\top,
+\delta q_f=\delta W_{Q,f}x,
 ```
 
-which reduces the dominance of singular-value magnitude in the raw gradient.
+so an exact quadratic metric on $\delta W_{Q,f}$ would also contain statistics of the input activation $x$. ORBIT deliberately keeps only the frequency-local $2\times2$ output-side factor and applies it as a left preconditioner. This is the local approximation evaluated by the paper.
 
-The resulting query/key candidates are denoted
+The second moments use an EMA,
 
 ```math
-U_Q,\qquad U_K.
+S_t
+=
+\beta S_{t-1}
++
+(1-\beta)S_{\mathrm{batch}},
+\qquad
+\beta=0.95,
 ```
 
-## Function-space preconditioning
+with the first observation used directly.
 
-For the full ORBIT variant, each two-row RoPE update pair is transformed using
+## Inverse-square-root preconditioning
+
+Let $U_Q,U_K$ be the Muon candidate updates. ORBIT acts on each two-row RoPE pair:
 
 ```math
 \widehat U_Q=M_Q^{-p/2}U_Q,
 \qquad
-\widehat U_K=M_K^{-p/2}U_K,
+\widehat U_K=M_K^{-p/2}U_K.
 ```
 
-with default functional power
+The default $p=1$ gives $M^{-1/2}$.
+
+For the regularized effective metric
 
 ```math
-p=1.
+M=V\Lambda V^\top,
 ```
 
-The default method therefore uses the inverse square root $M^{-1/2}$. Directions with large metric eigenvalues correspond to larger functional sensitivity and are attenuated more strongly.
+the transform is
+
+```math
+T=M^{-1/2}=V\Lambda^{-1/2}V^\top.
+```
+
+It satisfies
+
+```math
+T^\top M T=I.
+```
+
+Thus the local quadratic metric is whitened: directions with larger functional sensitivity are attenuated more strongly. This metric is local to the pre-softmax rotary Q/K interaction; it is not a full Fisher matrix, Hessian, or exact natural-gradient metric.
+
+The implementation evaluates the symmetric $2\times2$ inverse power analytically, adds $10^{-5}I$, and caps the effective condition number at 100.
 
 ## Joint Frobenius restoration
 
-Metric preconditioning can change the total size of the Q/K update. To prevent ORBIT from gaining simply by taking a larger step, a single restore factor is computed from the pair:
+Preconditioning changes both geometry and magnitude. ORBIT uses one shared factor
 
 ```math
 \rho
 =
 \sqrt{
 \frac{
-\lVert U_Q\rVert_F^2+
-\lVert U_K\rVert_F^2
+\lVert U_Q\rVert_F^2+\lVert U_K\rVert_F^2
 }{
-\lVert \widehat U_Q\rVert_F^2+
-\lVert \widehat U_K\rVert_F^2
+\lVert\widehat U_Q\rVert_F^2+\lVert\widehat U_K\rVert_F^2
 }
-}.
+},
 ```
 
-The final updates are
+then
 
 ```math
 \widetilde U_Q=\rho\widehat U_Q,
@@ -206,66 +166,34 @@ The final updates are
 \widetilde U_K=\rho\widehat U_K.
 ```
 
-Hence
+By construction,
 
 ```math
-\lVert \widetilde U_Q\rVert_F^2+
-\lVert \widetilde U_K\rVert_F^2
+\lVert\widetilde U_Q\rVert_F^2+
+\lVert\widetilde U_K\rVert_F^2
 =
 \lVert U_Q\rVert_F^2+
 \lVert U_K\rVert_F^2.
 ```
 
-ORBIT changes the geometry of the update while keeping the combined Q/K step budget fixed.
+Since
 
-## Numerical implementation
+```math
+\lVert U\rVert_F=\lVert\operatorname{vec}(U)\rVert_2,
+```
 
-Each local metric is a symmetric $2\times2$ matrix. `inverse_metric_power` computes the inverse power from its closed-form spectrum instead of calling a general batched eigensolver.
+the restoration fixes the aggregate Euclidean parameter-space magnitude of the Q/K step while leaving the metric free to reshape the coupled update.
 
-Before applying the matrix power, the implementation:
+## Variants
 
-- symmetrizes the metric;
-- applies the configured numerical floor;
-- caps the effective condition number;
-- handles nearly repeated eigenvalues with an isotropic branch;
-- falls back to identity preconditioning for non-finite auxiliary statistics.
-
-Default numerical settings:
-
-~~~text
-momentum              0.95
-Newton-Schulz steps   5
-Q/K covariance EMA    0.95
-metric epsilon        1e-5
-condition cap         100
-functional power      1.0
-~~~
-
-## Parameter routing
-
-| Parameter class | Optimizer path |
-| --- | --- |
-| Query / Key matrices | Muon candidate + ORBIT preconditioner |
-| Other hidden 2-D matrices | Muon |
-| Token embedding / tied LM head | AdamW with decay |
-| Vectors, biases, norms | AdamW without decay |
-
-The Q/K covariance buffers are training-only. They introduce no new learned parameter and are not required at inference.
-
-## Ablation variants
-
-The implementation includes four variants:
-
-~~~python
+```python
 Orbit(model, variant="orbit")
 Orbit(model, variant="orbit_norope")
 Orbit(model, variant="orbit_diag")
 Orbit(model, variant="orbit_identity")
-~~~
+```
 
-- `orbit`: full RoPE-transported $2\times2$ metric.
-- `orbit_norope`: uses Q/K covariances without relative-position transport.
-- `orbit_diag`: removes off-diagonal coupling from the local metric.
-- `orbit_identity`: keeps the statistics path but applies no functional preconditioner.
-
-These variants are intended for mechanism isolation rather than as separate production optimizers.
+- `orbit`: full causal RoPE-transported metric.
+- `orbit_norope`: opposite-side second moment without RoPE transport.
+- `orbit_diag`: transported metric with off-diagonal coupling removed.
+- `orbit_identity`: second-moment path retained, functional preconditioner disabled.

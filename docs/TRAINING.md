@@ -1,69 +1,15 @@
-# Training notes
+# Training
 
-ORBIT is a PyTorch optimizer with one additional requirement: the model must expose the query/key pairs and the small RoPE statistics used to build the local metric.
+Only ORBIT-specific training behavior is documented here. Final paper hyperparameters are intentionally not frozen in this file until the corrected post-audit campaign has been rerun.
 
-The included `OrbitGPT` model is the reference implementation.
+## Construction
 
-## Smoke run
-
-~~~bash
-python examples/quickstart.py
-~~~
-
-The example trains a small RoPE decoder for a few synthetic steps and prints optimizer diagnostics. It does not write experiment artifacts.
-
-## Reference 124M setup
-
-The primary matched experiments used:
-
-| Setting | Value |
-| --- | ---: |
-| Sequence length | 512 |
-| Layers | 12 |
-| Attention heads | 12 |
-| Embedding width | 768 |
-| Batch size | 8 |
-| Muon momentum | 0.95 |
-| Newton-Schulz steps | 5 |
-| Q/K covariance EMA | 0.95 |
-| Metric epsilon | $10^{-5}$ |
-| Condition cap | 100 |
-| Gradient clipping | 1.0 |
-
-The RoPE displacement set was
-
-```math
-\mathcal D=\{1,2,4,8,16,32,64,128\}.
-```
-
-The matched configuration selected by both Muon and ORBIT used:
-
-| Hyperparameter | Value |
-| --- | ---: |
-| Matrix learning rate | 0.0181771645661641 |
-| Weight decay | 0.005835070036773646 |
-| Auxiliary LR multiplier | 0.49061509693684174 |
-
-The corresponding auxiliary AdamW learning rate is
-
-```math
-0.0181771645661641\times0.49061509693684174
-\approx
-0.008918.
-```
-
-A 10% linear warmup was followed by cosine decay to $0.1\times$ the peak learning rate. The same schedule multiplier was applied to the matrix and auxiliary learning rates.
-
-## Optimizer construction
-
-Reference-scale construction:
-
-~~~python
+```python
 optimizer = Orbit(
     model,
-    lr=0.0181771645661641,
-    adamw_lr=0.008918,
-    weight_decay=0.005835070036773646,
+    lr=0.02,
+    adamw_lr=3e-4,
+    weight_decay=0.05,
     momentum=0.95,
     ns_steps=5,
     functional_power=1.0,
@@ -71,42 +17,93 @@ optimizer = Orbit(
     metric_condition_cap=100.0,
     deltas=(1, 2, 4, 8, 16, 32, 64, 128),
 )
-~~~
+```
 
-The values above reproduce the matched experimental recipe. They are not intended as universal defaults.
+`deltas` are non-negative causal distances $\Delta=i-j$; the metric transports them with $R(-\Delta)$.
 
-## Integrating another model
+## Scheduling
 
-A new model needs to expose:
+At construction time,
 
-~~~python
-model.orbit_qk_pairs()
-model.set_orbit_stat_collection(enabled)
-~~~
+```math
+r_{\mathrm{aux}}
+=
+\frac{\eta_{\mathrm{aux},0}}
+     {\eta_{\mathrm{matrix},0}}
+```
 
-The attention implementation must maintain the unrotated Q/K pair statistics and provide an `orbit_metrics(...)` method.
+is stored as a fixed ratio. At step $t$,
 
-The current `Orbit` class also assumes the token embedding and LM head are available as
+```math
+\eta_{\mathrm{aux},t}
+=
+r_{\mathrm{aux}}\eta_{\mathrm{matrix},t}.
+```
 
-~~~python
-model.wte
-model.lm_head
-~~~
+Therefore a normal PyTorch scheduler can operate on the optimizer’s `lr` field:
 
-for auxiliary parameter routing.
+```python
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer,
+    T_max=total_steps,
+    eta_min=0.1 * optimizer.param_groups[0]["lr"],
+)
+```
 
-If a model uses different names or a different parameter organization, adapt that routing explicitly rather than relying on shape alone.
+The current auxiliary rate is available through `optimizer.auxiliary_lr()`.
+
+## Gradient checkpointing
+
+Enable checkpointing in the reference model with
+
+```python
+OrbitGPTConfig(gradient_checkpointing=True)
+```
+
+Checkpoint recomputation runs with ORBIT second-moment collection suspended, so the EMA cadence is unchanged.
+
+## DDP
+
+When `torch.distributed` is initialized, each attention layer reduces its unnormalized Q/K second-moment sums and sample count across ranks before applying the EMA. No separate post-step metric synchronization is required.
+
+## Checkpoint/resume
+
+The Q/K second moments and `orbit_stats_seen` are persistent model buffers. Save model and optimizer state together:
+
+```python
+torch.save(
+    {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+    },
+    path,
+)
+```
+
+Restore the model state before continuing optimization:
+
+```python
+state = torch.load(path, map_location="cpu")
+model.load_state_dict(state["model"])
+optimizer.load_state_dict(state["optimizer"])
+scheduler.load_state_dict(state["scheduler"])
+```
+
+`Orbit.load_state_dict` also migrates the pre-audit optimizer metadata that stored an independent `adamw_lr` field.
 
 ## Diagnostics
 
-After optimizer steps, the full ORBIT variant exposes averaged diagnostic values:
+```python
+metrics = optimizer.diagnostics()
+```
 
-~~~python
-optimizer.diagnostics()
-~~~
+performs the device-to-host conversion for the accumulated metric-condition and joint-restoration diagnostics. The training step itself does not transfer those diagnostics to CPU.
 
-The current diagnostics include mean query metric condition, mean key metric condition, and the joint Frobenius restore factor.
+## Smoke run
 
-## Inference
+```bash
+python examples/quickstart.py
+```
 
-No optimizer state is needed for inference. The trained checkpoint can be used with the ordinary model forward pass; ORBIT does not add a layer, parameter, or inference-time kernel.
+The example uses a deterministic next-token pattern so its loss can demonstrate learning.
