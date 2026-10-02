@@ -57,12 +57,12 @@ class RotaryAttention(nn.Module):
 
         eye = torch.eye(2, dtype=torch.float32).view(1, 1, 2, 2)
         self.register_buffer(
-            "orbit_q_cov",
+            "orbit_q_second_moment",
             eye.repeat(self.n_head, self.n_freq, 1, 1),
             persistent=True,
         )
         self.register_buffer(
-            "orbit_k_cov",
+            "orbit_k_second_moment",
             eye.repeat(self.n_head, self.n_freq, 1, 1),
             persistent=True,
         )
@@ -109,7 +109,7 @@ class RotaryAttention(nn.Module):
             self.collect_orbit_stats = previous
 
     @torch.no_grad()
-    def _update_covariances(self, q: torch.Tensor, k: torch.Tensor) -> None:
+    def _update_second_moments(self, q: torch.Tensor, k: torch.Tensor) -> None:
         if not self.collect_orbit_stats or not self.training:
             return
 
@@ -127,16 +127,16 @@ class RotaryAttention(nn.Module):
             dist.all_reduce(count, op=dist.ReduceOp.SUM)
             q_sum, k_sum = packed[0], packed[1]
 
-        q_cov = q_sum / count.clamp_min(1.0)
-        k_cov = k_sum / count.clamp_min(1.0)
+        q_second_moment = q_sum / count.clamp_min(1.0)
+        k_second_moment = k_sum / count.clamp_min(1.0)
 
         # Keep the first observed batch un-smoothed without forcing a device-to-host
         # synchronization. orbit_stats_seen is persistent so resumed runs preserve
         # the exact EMA state.
-        beta = (self.orbit_stats_seen > 0).to(q_cov.dtype) * self.config.stats_beta
+        beta = (self.orbit_stats_seen > 0).to(q_second_moment.dtype) * self.config.stats_beta
         one_minus_beta = 1.0 - beta
-        self.orbit_q_cov.mul_(beta).add_(q_cov * one_minus_beta)
-        self.orbit_k_cov.mul_(beta).add_(k_cov * one_minus_beta)
+        self.orbit_q_second_moment.mul_(beta).add_(q_second_moment * one_minus_beta)
+        self.orbit_k_second_moment.mul_(beta).add_(k_second_moment * one_minus_beta)
         self.orbit_stats_seen.add_(1)
 
     @torch.no_grad()
@@ -153,25 +153,26 @@ class RotaryAttention(nn.Module):
 
             q_i^T R(j-i) k_j = q_i^T R(-delta) k_j.
 
-        A Q perturbation therefore sees R(-delta) C_k R(-delta)^T, while a K
-        perturbation sees R(-delta)^T C_q R(-delta).
+        A Q perturbation therefore sees R(-delta) S_k R(-delta)^T, while a K
+        perturbation sees R(-delta)^T S_q R(-delta), where S denotes the
+        uncentered second moment of the opposite-side activation pair.
         """
-        q_cov = self.orbit_q_cov.float()
-        k_cov = self.orbit_k_cov.float()
+        q_second_moment = self.orbit_q_second_moment.float()
+        k_second_moment = self.orbit_k_second_moment.float()
 
         if not rotate:
-            mq, mk = k_cov.clone(), q_cov.clone()
+            mq, mk = k_second_moment.clone(), q_second_moment.clone()
         else:
-            mq = torch.zeros_like(k_cov)
-            mk = torch.zeros_like(q_cov)
+            mq = torch.zeros_like(k_second_moment)
+            mk = torch.zeros_like(q_second_moment)
             ds = tuple(int(d) for d in deltas)
             if not ds:
                 ds = (0,)
             for delta in ds:
                 r = self._causal_relative_rotation(delta)
                 rt = r.transpose(-1, -2)
-                mq.add_(r @ k_cov @ rt)
-                mk.add_(rt @ q_cov @ r)
+                mq.add_(r @ k_second_moment @ rt)
+                mk.add_(rt @ q_second_moment @ r)
             mq.div_(len(ds))
             mk.div_(len(ds))
 
@@ -183,7 +184,7 @@ class RotaryAttention(nn.Module):
         q = self.q_proj(x).view(bsz, seqlen, self.n_head, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(bsz, seqlen, self.n_head, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(bsz, seqlen, self.n_head, self.head_dim).transpose(1, 2)
-        self._update_covariances(q.detach(), k.detach())
+        self._update_second_moments(q.detach(), k.detach())
         q = self._apply_rope(q)
         k = self._apply_rope(k)
         y = F.scaled_dot_product_attention(
