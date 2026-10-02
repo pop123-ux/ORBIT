@@ -7,42 +7,42 @@
 
 **Function-Space Optimization for Rotary Query-Key Interactions**
 
-ORBIT modifies the Muon candidate update only for rotary Query/Key projections. Its local metric is derived from the causal RoPE score itself, so the update geometry follows the computation performed by the Q/K block rather than matrix shape alone.
+ORBIT modifies the Muon candidate update for rotary Query/Key projections using a local metric derived from the causal RoPE score. The paper is the method specification; this repository mirrors its sign convention, second-moment definition, preconditioner, restoration rule, and training-state semantics.
 
-Documentation: [method](docs/METHOD.md) · [architecture](docs/ARCHITECTURE.md) · [training](docs/TRAINING.md) · [experiment status](docs/EXPERIMENTS.md)
+[Method](docs/METHOD.md) · [Architecture](docs/ARCHITECTURE.md) · [Training](docs/TRAINING.md) · [Experiment status](docs/EXPERIMENTS.md)
 
-## Core definition
+## Definition
 
-For a causal query at position $i$ attending to a key at position $j\le i$, define
+For a query at position $i$ attending to a causal key at $j\le i$, define
 
 ```math
-\Delta=i-j\ge 0.
+\Delta=i-j\ge0.
 ```
 
-With the rotation convention used by the implementation,
+The RoPE convention used here gives
 
 ```math
-s_{ij,f}
+(R_f(i)q_{i,f})^\top(R_f(j)k_{j,f})
 =
-q_{i,f}^{\top}R_f(-\Delta)k_{j,f}.
+q_{i,f}^\top R_f(-\Delta)k_{j,f}.
 ```
 
-For unrotated per-frequency covariances
+Let the unrotated per-frequency **uncentered second moments** be
 
 ```math
-C_{Q,f}=\mathbb E[q_fq_f^\top],
+S_{Q,f}=\mathbb E[q_fq_f^\top],
 \qquad
-C_{K,f}=\mathbb E[k_fk_f^\top],
+S_{K,f}=\mathbb E[k_fk_f^\top].
 ```
 
-ORBIT uses
+ORBIT defines
 
 ```math
 M_{Q,f}
 =
 \mathbb E_{\Delta}
 \left[
-R_f(-\Delta)C_{K,f}R_f(-\Delta)^\top
+R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
 \right],
 ```
 
@@ -51,11 +51,17 @@ M_{K,f}
 =
 \mathbb E_{\Delta}
 \left[
-R_f(-\Delta)^\top C_{Q,f}R_f(-\Delta)
+R_f(-\Delta)^\top S_{Q,f}R_f(-\Delta)
 \right].
 ```
 
-The Muon candidates $U_Q,U_K$ are transformed by
+The expectation is approximated by a uniform average over
+
+```math
+\mathcal D=\{1,2,4,8,16,32,64,128\}.
+```
+
+Muon produces candidates $U_Q,U_K$. ORBIT applies
 
 ```math
 \widehat U_Q=M_Q^{-1/2}U_Q,
@@ -63,7 +69,7 @@ The Muon candidates $U_Q,U_K$ are transformed by
 \widehat U_K=M_K^{-1/2}U_K,
 ```
 
-then jointly rescaled so that
+then uses one shared scalar $\rho$ so that
 
 ```math
 \lVert\widetilde U_Q\rVert_F^2+
@@ -73,21 +79,7 @@ then jointly rescaled so that
 \lVert U_K\rVert_F^2.
 ```
 
-The full derivation is in [`docs/METHOD.md`](docs/METHOD.md).
-
-## Correctness invariants
-
-The implementation makes the conventions that matter for ORBIT explicit:
-
-- `deltas` are non-negative **causal distances** $i-j$; negative values are rejected.
-- RoPE transport uses $R(-\Delta)$, matching the actual score produced by `_apply_rope`.
-- Gradient-checkpoint recomputation does not update the Q/K covariance EMA a second time.
-- DDP ranks aggregate Q/K sufficient statistics before the EMA, so every replica applies the same ORBIT metric.
-- Q/K covariance state and the observation counter are persistent model buffers and survive checkpoint/resume.
-- The auxiliary learning rate is stored as a fixed ratio to the matrix learning rate, so a standard PyTorch LR scheduler scales both paths together.
-- Diagnostic device-to-host transfers occur only when `optimizer.diagnostics()` is requested.
-
-These properties are covered by regression tests.
+The inverse square root whitens the local quadratic metric; the joint Frobenius restoration fixes the aggregate Q/K parameter-space step magnitude. The derivation is in [`docs/METHOD.md`](docs/METHOD.md).
 
 ## Install
 
@@ -102,7 +94,6 @@ pytest -q
 
 ```python
 import torch
-
 from orbit import Orbit, OrbitGPT, OrbitGPTConfig
 
 model = OrbitGPT(
@@ -124,13 +115,27 @@ optimizer = Orbit(
 x = torch.randint(0, model.config.vocab_size, (2, 512))
 loss = model(x, labels=x).loss
 loss.backward()
-
 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 optimizer.step()
 optimizer.zero_grad(set_to_none=True)
 ```
 
-The included `OrbitGPT` is the reference interface. A different RoPE model must expose its Q/K pairs and the attention modules that construct the ORBIT metrics; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The included `OrbitGPT` is the reference model interface. Integrating a different RoPE model requires exposing its Q/K pairs and the modules that construct the ORBIT metrics; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Correctness contract
+
+The regression suite fixes the implementation choices that are easy to make ambiguous:
+
+- `deltas` are non-negative causal distances $i-j$ and metric transport uses $R(-\Delta)$;
+- an autograd score-gradient test verifies the same sign convention independently of the metric code;
+- the $2\times2$ inverse metric is checked against a float64 eigendecomposition over multiple scales and powers;
+- the joint Q/K Frobenius budget is tested directly;
+- `orbit_identity` is checked against the matched Muon control;
+- checkpoint recomputation contributes no duplicate second-moment update;
+- DDP ranks aggregate sufficient statistics before the EMA;
+- second-moment state survives checkpoint/resume;
+- ordinary PyTorch LR schedulers scale the matrix and auxiliary paths together;
+- diagnostic host synchronization is deferred until `diagnostics()` is requested.
 
 ## Variants
 
@@ -141,7 +146,10 @@ Orbit(model, variant="orbit_diag")
 Orbit(model, variant="orbit_identity")
 ```
 
-`orbit_identity` preserves the same statistics path while disabling the functional preconditioner. `orbit_norope` removes relative-position transport. `orbit_diag` removes off-diagonal coupling inside each $2\times2$ metric.
+- `orbit` — full transported $2\times2$ metric.
+- `orbit_norope` — opposite-side second moment without relative-position transport.
+- `orbit_diag` — transported metric with off-diagonal coupling removed.
+- `orbit_identity` — statistics path retained, functional preconditioner disabled.
 
 ## Repository layout
 
@@ -167,15 +175,15 @@ tests/
     test_docs.py
 ```
 
-## Empirical status
+## Experiment status
 
-A pre-release audit found that the earlier experiment campaign transported the RoPE metric with the opposite relative-position sign, and that gradient checkpointing caused duplicate covariance updates in the 355M runs. The implementation and documentation in this repository correct both issues.
+The pre-release audit changed the implementation that generated the earlier paper campaign. Those historical numerical results are **not release evidence for the corrected method**. The corrected matched search/confirmation, ablations, and transfer cells must be rerun before numerical claims are restored to the release manuscript.
 
-The earlier numerical paper results are therefore **not treated as evidence for the corrected implementation**. Corrected matched, ablation, and transfer runs must complete before the manuscript is released. [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) records exactly which evidence is affected.
+The release repository will include compact experiment code and machine-readable per-seed records for the final corrected campaign without bundling the manuscript build system. See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
 
 ## Citation
 
-Citation metadata is in [`CITATION.cff`](CITATION.cff).
+Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
 
 ## License
 
