@@ -1,134 +1,114 @@
-# Architecture and code map
+# Architecture
 
-This document maps the main ORBIT operations to the repository implementation.
+This document describes only the interfaces and state that are specific to ORBIT.
 
-## Package layout
+## Code map
 
 | File | Responsibility |
 | --- | --- |
-| `src/orbit/optimizer.py` | Muon candidate, $2\times2$ inverse metric, ORBIT preconditioning |
+| `src/orbit/model.py` | RoPE attention, Q/K covariance state, causal metric construction |
+| `src/orbit/optimizer.py` | Muon candidate, $2\times2$ inverse metric, Q/K preconditioning |
 | `src/orbit/baselines.py` | matched Muon control |
-| `src/orbit/model.py` | RoPE GPT reference model and Q/K statistics |
-| `examples/quickstart.py` | minimal executable training example |
-| `tests/test_orbit.py` | metric, statistics, optimizer-step and ablation tests |
-| `tests/test_muon_control.py` | baseline-control tests |
+| `tests/test_correctness.py` | causal-sign, checkpoint, DDP, scheduler and state-resume regressions |
 
-## Muon base update
+## Model contract
 
-`optimizer.py::newton_schulz` implements the five-step quintic polar iteration.
+`Orbit` expects the model to expose
 
-`Orbit._spectral_candidate` applies momentum, look-ahead, Newton-Schulz orthogonalization, and the same aspect-ratio scaling used by the matched Muon control.
-
-ORBIT therefore modifies the Q/K candidate **after** the generic spectral matrix step has been constructed.
-
-## Q/K statistics
-
-`model.py::RotaryAttention._update_covariances` maintains one query covariance and one key covariance for every
-
-~~~text
-[attention head, RoPE frequency pair]
-~~~
-
-location.
-
-Each covariance is $2\times2$. Statistics are updated only during training and only when ORBIT enables collection.
-
-`RotaryAttention.orbit_metrics` applies the configured relative-position rotations and returns the query-side and key-side metrics.
-
-## Inverse metric
-
-`optimizer.py::inverse_metric_power` computes
-
-```math
-M^{-p/2}
-```
-
-for a batch of symmetric $2\times2$ matrices.
-
-The implementation uses the analytic two-dimensional spectrum rather than `torch.linalg.eigh`. It also performs scale normalization, condition-number clipping, a repeated-eigenvalue branch, and a local identity fallback for invalid auxiliary statistics.
-
-## Q/K preconditioning
-
-`Orbit._precondition_pair` reshapes each matrix candidate to
-
-~~~text
-[head, frequency, 2, input_dimension]
-~~~
-
-so the local metric acts directly on the two RoPE coordinates.
-
-After applying the transforms, one scalar restores the combined Q/K Frobenius norm.
-
-## Parameter routing
-
-During initialization, `Orbit` assigns each parameter to one of five internal roles:
-
-~~~text
-q
-k
-spectral
-aux_decay
-aux_nodecay
-~~~
-
-The `q`, `k`, and `spectral` paths use the Muon-style matrix candidate. Only `q` and `k` then enter `_precondition_pair`.
-
-The auxiliary paths implement AdamW-style updates for parameters that are not routed through the spectral matrix update.
-
-## Model interface
-
-The reference `OrbitGPT` exposes:
-
-~~~python
+```python
 model.orbit_qk_pairs()
 model.set_orbit_stat_collection(enabled)
-~~~
+```
 
-Each item returned by `orbit_qk_pairs()` provides:
+Each item returned by `orbit_qk_pairs()` contains
 
-~~~python
+```python
 {
     "q": q_parameter,
     "k": k_parameter,
     "module": attention_module,
 }
-~~~
+```
 
-and the attention module must provide:
+and the attention module provides
 
-~~~python
+```python
 attention_module.orbit_metrics(deltas, rotate=True, eps=...)
-~~~
+```
 
-The current optimizer also identifies `model.wte.weight` and `model.lm_head.weight` as the embedding/head parameters assigned to the auxiliary decay path.
+The reference `OrbitGPT` also exposes `wte` and `lm_head` so the auxiliary path can identify the embedding/head parameters explicitly rather than by tensor shape.
 
-## Optimizer step
+## Relative-position convention
 
-At a high level, one ORBIT step is:
+`RotaryAttention._apply_rope` rotates the query at $i$ by $R(i)$ and the key at $j$ by $R(j)$. Their score therefore contains
 
-~~~text
-gradient
-  │
-  ├─ hidden 2-D matrix ──> Muon candidate
-  │                          │
-  │                          ├─ Q/K ──> ORBIT metric transform ──> joint norm restore
-  │                          └─ other matrix ────────────────────> update
-  │
-  └─ vector / embedding / head ──> auxiliary AdamW
-~~~
+```math
+R(i)^\top R(j)=R(j-i).
+```
 
-The Q/K metric path is local to each attention layer. No full-model curvature matrix is formed.
+ORBIT defines `delta = i - j >= 0` and constructs `R(-delta)` through `RotaryAttention._causal_relative_rotation`. The same helper is used by the metric path, which prevents the documentation and implementation from adopting opposite sign conventions.
 
-## Inference boundary
+## Statistics state
 
-ORBIT changes only the optimizer and training-time statistics.
+Each attention layer stores
 
-The following are not required after training:
+```text
+orbit_q_cov      [n_head, n_freq, 2, 2]
+orbit_k_cov      [n_head, n_freq, 2, 2]
+orbit_stats_seen scalar
+```
 
-- covariance buffers;
-- metric construction;
-- inverse metric transforms;
-- joint restore factors;
-- optimizer diagnostics.
+All three are persistent buffers and therefore part of `model.state_dict()`.
 
-The deployed model retains the standard RoPE attention forward pass.
+### Gradient checkpointing
+
+The reference model uses non-reentrant checkpointing. The original forward is allowed to update the statistics; the recomputation context calls `suspend_orbit_stat_collection()`. This keeps the EMA update count independent of whether checkpointing is enabled.
+
+### Distributed data parallel
+
+`_update_covariances` forms unnormalized Q/K second-moment sums and a sample count. When `torch.distributed` is initialized, these sufficient statistics are reduced across ranks before normalization and before the EMA. Consequently each rank holds the same covariance state before the optimizer step.
+
+## Preconditioning path
+
+`Orbit._spectral_candidate` constructs the matrix candidate. For Q/K pairs, `Orbit._precondition_pair` then:
+
+1. requests $M_Q,M_K$ from the corresponding attention module;
+2. optionally diagonalizes the metrics for `orbit_diag`;
+3. computes $M^{-p/2}$ with `inverse_metric_power`;
+4. reshapes each candidate to `[head, frequency, 2, input_dimension]`;
+5. left-multiplies each 2-row RoPE pair by its local transform;
+6. applies one shared Q/K Frobenius restore factor.
+
+Other hidden 2-D matrices remain on the matched spectral path.
+
+## Learning-rate coupling
+
+The constructor accepts
+
+```python
+Orbit(model, lr=matrix_lr, adamw_lr=aux_lr)
+```
+
+and stores the ratio
+
+```math
+r_{\mathrm{aux}}=\frac{\mathrm{aux\_lr}}{\mathrm{matrix\_lr}}.
+```
+
+At each step the auxiliary learning rate is computed as
+
+```math
+\eta_{\mathrm{aux}}=\eta_{\mathrm{matrix}}r_{\mathrm{aux}}.
+```
+
+A standard PyTorch scheduler therefore scales both paths through the single scheduled `lr` field.
+
+## Diagnostics
+
+The optimizer accumulates diagnostic scalars as device tensors during `step()`. Device-to-host conversion occurs only when
+
+```python
+optimizer.diagnostics()
+```
+
+is called.
