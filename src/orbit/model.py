@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Iterable
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
@@ -34,13 +36,7 @@ class OrbitGPTConfig:
 
 
 class RotaryAttention(nn.Module):
-    """Causal MHA plus optimizer-only RoPE circuit statistics.
-
-    The buffers are deliberately tiny: for every head and 2D RoPE frequency
-    pair we store one 2x2 covariance for Q and K. They are not parameters and
-    are irrelevant at inference. ORBIT uses them to approximate the local
-    metric induced by movement of pre-softmax attention logits.
-    """
+    """Causal MHA with the Q/K statistics consumed by ORBIT."""
 
     def __init__(self, config: OrbitGPTConfig, layer_idx: int) -> None:
         super().__init__()
@@ -58,16 +54,23 @@ class RotaryAttention(nn.Module):
             ** (torch.arange(0, self.head_dim, 2, dtype=torch.float32) / self.head_dim)
         )
         self.register_buffer("inv_freq", inv_freq, persistent=True)
+
         eye = torch.eye(2, dtype=torch.float32).view(1, 1, 2, 2)
         self.register_buffer(
-            "orbit_q_cov", eye.repeat(self.n_head, self.n_freq, 1, 1), persistent=False
+            "orbit_q_cov",
+            eye.repeat(self.n_head, self.n_freq, 1, 1),
+            persistent=True,
         )
         self.register_buffer(
-            "orbit_k_cov", eye.repeat(self.n_head, self.n_freq, 1, 1), persistent=False
+            "orbit_k_cov",
+            eye.repeat(self.n_head, self.n_freq, 1, 1),
+            persistent=True,
         )
-        self.register_buffer("orbit_stats_seen", torch.zeros((), dtype=torch.long), persistent=False)
-        # Baselines must not pay ORBIT's statistics overhead. Orbit.__init__
-        # explicitly enables collection only for ORBIT-family runs.
+        self.register_buffer(
+            "orbit_stats_seen",
+            torch.zeros((), dtype=torch.long),
+            persistent=True,
+        )
         self.collect_orbit_stats = False
 
     def _apply_rope(self, x: torch.Tensor) -> torch.Tensor:
@@ -82,18 +85,58 @@ class RotaryAttention(nn.Module):
         rotated = torch.cat((a * cos - b * sin, a * sin + b * cos), dim=-1)
         return rotated.flatten(-2)
 
+    def _causal_relative_rotation(self, delta: int) -> torch.Tensor:
+        """Return R(-delta) for causal distance delta = query_pos - key_pos >= 0."""
+        if delta < 0:
+            raise ValueError("ORBIT deltas are causal distances i-j and must be non-negative")
+        angle = -self.inv_freq.float() * float(delta)
+        c, s = angle.cos(), angle.sin()
+        return torch.stack(
+            (
+                torch.stack((c, -s), dim=-1),
+                torch.stack((s, c), dim=-1),
+            ),
+            dim=-2,
+        ).unsqueeze(0)
+
+    @contextmanager
+    def suspend_orbit_stat_collection(self):
+        previous = self.collect_orbit_stats
+        self.collect_orbit_stats = False
+        try:
+            yield
+        finally:
+            self.collect_orbit_stats = previous
+
     @torch.no_grad()
     def _update_covariances(self, q: torch.Tensor, k: torch.Tensor) -> None:
         if not self.collect_orbit_stats or not self.training:
             return
+
         q2 = q.float().view(q.size(0), self.n_head, q.size(2), self.n_freq, 2)
         k2 = k.float().view(k.size(0), self.n_head, k.size(2), self.n_freq, 2)
-        denom = float(max(1, q.size(0) * q.size(2)))
-        q_cov = torch.einsum("bhtfi,bhtfj->hfij", q2, q2) / denom
-        k_cov = torch.einsum("bhtfi,bhtfj->hfij", k2, k2) / denom
-        beta = self.config.stats_beta if int(self.orbit_stats_seen) else 0.0
-        self.orbit_q_cov.mul_(beta).add_(q_cov, alpha=1.0 - beta)
-        self.orbit_k_cov.mul_(beta).add_(k_cov, alpha=1.0 - beta)
+        q_sum = torch.einsum("bhtfi,bhtfj->hfij", q2, q2)
+        k_sum = torch.einsum("bhtfi,bhtfj->hfij", k2, k2)
+        count = q_sum.new_tensor(float(max(1, q.size(0) * q.size(2))))
+
+        # DDP ranks must condition on the same statistics. Aggregate sufficient
+        # statistics before the EMA so every replica applies the same Q/K update.
+        if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+            packed = torch.stack((q_sum, k_sum), dim=0)
+            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count, op=dist.ReduceOp.SUM)
+            q_sum, k_sum = packed[0], packed[1]
+
+        q_cov = q_sum / count.clamp_min(1.0)
+        k_cov = k_sum / count.clamp_min(1.0)
+
+        # Keep the first observed batch un-smoothed without forcing a device-to-host
+        # synchronization. orbit_stats_seen is persistent so resumed runs preserve
+        # the exact EMA state.
+        beta = (self.orbit_stats_seen > 0).to(q_cov.dtype) * self.config.stats_beta
+        one_minus_beta = 1.0 - beta
+        self.orbit_q_cov.mul_(beta).add_(q_cov * one_minus_beta)
+        self.orbit_k_cov.mul_(beta).add_(k_cov * one_minus_beta)
         self.orbit_stats_seen.add_(1)
 
     @torch.no_grad()
@@ -104,16 +147,18 @@ class RotaryAttention(nn.Module):
         rotate: bool = True,
         eps: float = 1e-5,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return 2x2 local Q/K logit-sensitivity metrics.
+        """Return the local Q/K logit-sensitivity metrics.
 
-        For one RoPE pair the score contribution is q^T R_delta k. Therefore a
-        Q perturbation sees covariance R C_k R^T, while a K perturbation sees
-        R^T C_q R. Averaging over relative offsets gives a cheap approximation
-        to functional movement in attention-logit space without materializing a
-        sequence-by-sequence Jacobian or a dense d_model x d_model circuit.
+        For causal distance delta = i-j >= 0, applying RoPE to q_i and k_j gives
+
+            q_i^T R(j-i) k_j = q_i^T R(-delta) k_j.
+
+        A Q perturbation therefore sees R(-delta) C_k R(-delta)^T, while a K
+        perturbation sees R(-delta)^T C_q R(-delta).
         """
         q_cov = self.orbit_q_cov.float()
         k_cov = self.orbit_k_cov.float()
+
         if not rotate:
             mq, mk = k_cov.clone(), q_cov.clone()
         else:
@@ -123,20 +168,13 @@ class RotaryAttention(nn.Module):
             if not ds:
                 ds = (0,)
             for delta in ds:
-                angle = self.inv_freq.float() * float(delta)
-                c, s = angle.cos(), angle.sin()
-                r = torch.stack(
-                    (
-                        torch.stack((c, -s), dim=-1),
-                        torch.stack((s, c), dim=-1),
-                    ),
-                    dim=-2,
-                ).unsqueeze(0)
+                r = self._causal_relative_rotation(delta)
                 rt = r.transpose(-1, -2)
                 mq.add_(r @ k_cov @ rt)
                 mk.add_(rt @ q_cov @ r)
             mq.div_(len(ds))
             mk.div_(len(ds))
+
         eye = torch.eye(2, device=mq.device, dtype=mq.dtype).view(1, 1, 2, 2)
         return mq + eps * eye, mk + eps * eye
 
@@ -185,7 +223,7 @@ class Block(nn.Module):
 
 
 class OrbitGPT(nn.Module):
-    """GPT-2-sized decoder with RoPE and otherwise conventional pre-norm blocks."""
+    """GPT-2-sized decoder with RoPE and pre-norm residual blocks."""
 
     def __init__(self, config: OrbitGPTConfig) -> None:
         super().__init__()
@@ -230,15 +268,28 @@ class OrbitGPT(nn.Module):
             raise ValueError(
                 f"sequence length {input_ids.size(1)} exceeds block_size {self.config.block_size}"
             )
+
         x = self.drop(self.wte(input_ids))
         for block in self.blocks:
             if self.config.gradient_checkpointing and self.training:
-                x = checkpoint(block, x, use_reentrant=False)
+                def checkpoint_context(attn=block.attn):
+                    return nullcontext(), attn.suspend_orbit_stat_collection()
+
+                x = checkpoint(
+                    block,
+                    x,
+                    use_reentrant=False,
+                    context_fn=checkpoint_context,
+                )
             else:
                 x = block(x)
+
         x = self.ln_f(x)
         logits = self.lm_head(x)
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.size(-1)), labels[:, 1:].reshape(-1))
+            loss = F.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.size(-1)),
+                labels[:, 1:].reshape(-1),
+            )
         return SimpleNamespace(logits=logits, loss=loss)
