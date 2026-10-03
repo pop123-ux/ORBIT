@@ -55,4 +55,4 @@ The primary held-out seed set is `500` through `509`. The matched tuning seed is
 
 For direct reproduction, [`experiments/paper_run.py`](../experiments/paper_run.py) reads the frozen config so users do not need to rediscover the primary recipe. [`experiments/matched.py`](../experiments/matched.py) remains available to audit or rerun the selection procedure itself.
 
-The full historical paper campaign remains in the paper-development repository used to generate the manuscript artifacts; the standalone package focuses on the primary Muon–ORBIT result and ORBIT-specific mechanism variants.
+The standalone package additionally includes the exact non-ASTRO optimizer definitions used around ORBIT in the paper—AdamW, Muon, NorMuon, and the published/reference AdaMuon variant—and exposes them through lightweight examples and `experiments/run.py`. Those convenience runs are deliberately not a recreation of the broad optimizer-specific tuning campaign. The full historical campaign orchestration remains in the paper-development repository used to generate the manuscript artifacts.
