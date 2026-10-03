@@ -6,8 +6,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = [
     ROOT / "README.md",
+    ROOT / "CHANGELOG.md",
+    ROOT / "RELEASE.md",
     ROOT / "docs" / "METHOD.md",
     ROOT / "docs" / "ARCHITECTURE.md",
+    ROOT / "docs" / "ADAPTERS.md",
     ROOT / "docs" / "EXPERIMENTS.md",
     ROOT / "docs" / "TRAINING.md",
     ROOT / "experiments" / "README.md",
