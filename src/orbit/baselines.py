@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from .optimizer import newton_schulz
+from .optimizer import auxiliary_decay_parameter_ids, newton_schulz
 
 
 class Muon(torch.optim.Optimizer):
@@ -45,7 +45,7 @@ class Muon(torch.optim.Optimizer):
         )
         self.model = model
         model.set_orbit_stat_collection(False)
-        excluded = {id(model.wte.weight), id(model.lm_head.weight)}
+        excluded = auxiliary_decay_parameter_ids(model)
         self._meta: dict[int, str] = {}
         for param in params:
             if param.ndim < 2:
