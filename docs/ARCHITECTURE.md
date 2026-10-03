@@ -6,12 +6,10 @@ This document covers the ORBIT-specific model/optimizer interface and state.
 
 | File | Responsibility |
 | --- | --- |
-| `src/orbit/model.py` | RoPE attention, Q/K second-moment state, causal metric construction |
+| `src/orbit/model.py` | RoPE attention, Q/K second-moment state, optimizer-side rotary metric construction |
 | `src/orbit/optimizer.py` | Muon candidate, analytic $2\times2$ inverse metric, Q/K preconditioning |
 | `src/orbit/baselines.py` | matched Muon control used by repository tests |
 | `tests/test_correctness.py` | paper-aligned correctness regressions |
-
-The canonical paper implementation and this repository use the same `model.py` and `optimizer.py` source.
 
 ## Model contract
 
@@ -40,7 +38,7 @@ attention_module.orbit_metrics(deltas, rotate=True, eps=...)
 
 The reference `OrbitGPT` exposes `wte` and `lm_head` so the auxiliary path can identify the embedding/head parameters explicitly.
 
-## Relative-position convention
+## Forward vs optimizer rotary convention
 
 `RotaryAttention._apply_rope` rotates the query at $i$ by $R(i)$ and the key at $j$ by $R(j)$:
 
@@ -48,7 +46,19 @@ The reference `OrbitGPT` exposes `wte` and `lm_head` so the auxiliary path can i
 R(i)^\top R(j)=R(j-i).
 ```
 
-ORBIT defines `delta = i - j >= 0`, so `RotaryAttention._causal_relative_rotation(delta)` constructs $R(-\delta)$. The score-gradient and metric paths share this convention, and the regression suite checks it independently with autograd.
+With causal separation $\Delta=i-j\ge0$, the forward score therefore contains $R(-\Delta)$.
+
+ORBIT deliberately uses the inverse orientation for its **optimizer-side transport**. `RotaryAttention._optimizer_transport_rotation(delta)` constructs $R(+\Delta)$, and `orbit_metrics` uses
+
+```math
+M_Q=\mathbb E[R(+\Delta)S_KR(+\Delta)^\top],
+```
+
+```math
+M_K=\mathbb E[R(+\Delta)^\top S_QR(+\Delta)].
+```
+
+The regression suite checks the two conventions separately: autograd verifies the forward $R(-\Delta)$ score, while the metric test verifies ORBIT's $R(+\Delta)$ optimizer transport.
 
 ## Second-moment state
 
@@ -65,6 +75,8 @@ These are persistent buffers.
 ### Gradient checkpointing
 
 The reference model uses non-reentrant checkpointing. The original forward updates the second moments; the recomputation context calls `suspend_orbit_stat_collection()`. This keeps one second-moment update per logical training step.
+
+This is engineering hardening for downstream use. The primary 124M paper experiments did not use gradient checkpointing, so it does not change the optimizer geometry evaluated there.
 
 ### Distributed training
 
