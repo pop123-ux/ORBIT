@@ -28,6 +28,7 @@ jobs:
       - name: Experiment CLI
         run: |
           python experiments/run.py --help
+          python experiments/paper_run.py --help
           python experiments/matched.py candidates > /tmp/orbit-matched-candidates.json
       - name: Quickstart
         run: python examples/quickstart.py
