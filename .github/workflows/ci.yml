@@ -30,8 +30,11 @@ jobs:
           python experiments/run.py --help
           python experiments/paper_run.py --help
           python experiments/matched.py candidates > /tmp/orbit-matched-candidates.json
-      - name: Quickstart
-        run: python examples/quickstart.py
+      - name: Examples
+        run: |
+          python examples/quickstart.py
+          python examples/toy_baseline_step.py
+          python examples/toy_compare.py --steps 2
 
   minimum-torch:
     runs-on: ubuntu-latest
