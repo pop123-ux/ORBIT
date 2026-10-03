@@ -1,8 +1,8 @@
 # Method
 
-This document follows the paper’s mathematical convention exactly.
+This document defines the canonical ORBIT optimizer used by the paper's primary 124M experiments.
 
-## Causal RoPE score
+## Forward RoPE score
 
 For a query at position $i$ and a causal key at $j\le i$, define
 
@@ -10,7 +10,7 @@ For a query at position $i$ and a causal key at $j\le i$, define
 \Delta=i-j\ge0.
 ```
 
-The implementation applies $R_f(i)$ to the query pair and $R_f(j)$ to the key pair. Since RoPE rotations are orthogonal,
+The model applies $R_f(i)$ to the query pair and $R_f(j)$ to the key pair. Since RoPE rotations are orthogonal,
 
 ```math
 (R_f(i)q_{i,f})^\top(R_f(j)k_{j,f})
@@ -20,52 +20,28 @@ q_{i,f}^\top R_f(i)^\top R_f(j)k_{j,f}
 q_{i,f}^\top R_f(-\Delta)k_{j,f}.
 ```
 
-For a perturbation $\delta q_f$,
+That identity describes the **forward attention computation**.
 
-```math
-\delta s_f
-=
-\delta q_f^\top R_f(-\Delta)k_f.
-```
+ORBIT does not claim to use the exact quadratic pullback of this score. Instead, it uses the same RoPE frequency structure to define an **optimizer-side transport geometry** in the inverse orientation, $R_f(+\Delta)$. This distinction is intentional and is part of the optimizer specification.
 
-Therefore
-
-```math
-\mathbb E[(\delta s_f)^2]
-=
-\delta q_f^\top
-\mathbb E\!\left[
-R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
-\right]
-\delta q_f,
-```
-
-where
-
-```math
-S_{K,f}=\mathbb E[k_fk_f^\top].
-```
-
-The symmetric key-side expression follows from perturbing $k_f$.
-
-## Local Q/K metric
+## ORBIT optimizer-side Q/K metric
 
 ORBIT maintains the uncentered second moments
 
 ```math
 S_{Q,f}=\mathbb E[q_fq_f^\top],
 \qquad
-S_{K,f}=\mathbb E[k_fk_f^\top],
+S_{K,f}=\mathbb E[k_fk_f^\top].
 ```
 
-and defines
+For non-negative causal separations $\Delta=i-j$, the paper-trained optimizer defines
 
 ```math
 M_{Q,f}
 =
 \mathbb E_\Delta
 \left[
-R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
+R_f(+\Delta)S_{K,f}R_f(+\Delta)^\top
 \right],
 ```
 
@@ -74,11 +50,11 @@ M_{K,f}
 =
 \mathbb E_\Delta
 \left[
-R_f(-\Delta)^\top S_{Q,f}R_f(-\Delta)
+R_f(+\Delta)^\top S_{Q,f}R_f(+\Delta)
 \right].
 ```
 
-The relative-position expectation is approximated by a uniform average over the fixed log-spaced causal-distance grid
+The relative-position expectation is approximated by a uniform average over the fixed log-spaced grid
 
 ```math
 \mathcal D=\{1,2,4,8,16,32,64,128\}.
@@ -86,13 +62,15 @@ The relative-position expectation is approximated by a uniform average over the 
 
 This grid is a design approximation. It is not an estimate of the empirical token-pair distance distribution.
 
-The matrices $M_{Q,f}$ and $M_{K,f}$ are output-coordinate factors, not complete parameter-space pullbacks. For example,
+The use of $R(+\Delta)$ should be read as an optimizer design choice: ORBIT transports the opposite-side second moment in the orientation inverse to the causal score rotation. The resulting matrices are RoPE-informed local preconditioners, not exact Fisher blocks, Hessians, natural-gradient metrics, or complete parameter-space pullbacks.
+
+The matrices $M_{Q,f}$ and $M_{K,f}$ are output-coordinate factors. For example,
 
 ```math
 \delta q_f=\delta W_{Q,f}x,
 ```
 
-so an exact quadratic metric on $\delta W_{Q,f}$ would also contain statistics of the input activation $x$. ORBIT deliberately keeps only the frequency-local $2\times2$ output-side factor and applies it as a left preconditioner. This is the local approximation evaluated by the paper.
+so an exact quadratic metric on $\delta W_{Q,f}$ would also contain statistics of the input activation $x$. ORBIT deliberately keeps only the frequency-local $2\times2$ output-side factor and applies it as a left preconditioner.
 
 The second moments use an EMA,
 
@@ -138,9 +116,7 @@ It satisfies
 T^\top M T=I.
 ```
 
-Thus the local quadratic metric is whitened: directions with larger functional sensitivity are attenuated more strongly. This metric is local to the pre-softmax rotary Q/K interaction; it is not a full Fisher matrix, Hessian, or exact natural-gradient metric.
-
-The implementation evaluates the symmetric $2\times2$ inverse power analytically, adds $10^{-5}I$, and caps the effective condition number at 100.
+Thus the local quadratic geometry encoded by ORBIT's metric is whitened before the update is restored to the original joint Q/K step budget. The implementation evaluates the symmetric $2\times2$ inverse power analytically, adds $10^{-5}I$, and caps the effective condition number at 100.
 
 ## Joint Frobenius restoration
 
@@ -182,7 +158,37 @@ Since
 \lVert U\rVert_F=\lVert\operatorname{vec}(U)\rVert_2,
 ```
 
-the restoration fixes the aggregate Euclidean parameter-space magnitude of the Q/K step while leaving the metric free to reshape the coupled update.
+the restoration fixes the aggregate Euclidean parameter-space magnitude of the Q/K step while leaving the ORBIT metric free to reshape the coupled direction.
+
+## Compact update rule
+
+For one paired Q/K projection, define
+
+```math
+\mathcal T_Q=\operatorname{blkdiag}_f(M_{Q,f}^{-1/2}),
+\qquad
+\mathcal T_K=\operatorname{blkdiag}_f(M_{K,f}^{-1/2}).
+```
+
+Then
+
+```math
+(\widetilde U_Q,\widetilde U_K)
+=
+\rho(\mathcal T_Q U_Q,\mathcal T_K U_K),
+```
+
+with $\rho$ given above, followed by
+
+```math
+W_{Q,t+1}=(1-\eta_t\lambda)W_{Q,t}-\eta_t\widetilde U_Q,
+```
+
+```math
+W_{K,t+1}=(1-\eta_t\lambda)W_{K,t}-\eta_t\widetilde U_K.
+```
+
+Other hidden matrix parameters retain the ordinary Muon update, while embeddings, biases, normalization parameters, and the tied output head use the auxiliary AdamW path.
 
 ## Variants
 
@@ -193,7 +199,11 @@ Orbit(model, variant="orbit_diag")
 Orbit(model, variant="orbit_identity")
 ```
 
-- `orbit`: full causal RoPE-transported metric.
-- `orbit_norope`: opposite-side second moment without RoPE transport.
+- `orbit`: full $R(+\Delta)$ optimizer-side transported metric.
+- `orbit_norope`: opposite-side second moment without rotary transport.
 - `orbit_diag`: transported metric with off-diagonal coupling removed.
 - `orbit_identity`: second-moment path retained, functional preconditioner disabled.
+
+## Engineering semantics
+
+The reusable package keeps the paper-trained optimizer geometry but hardens the surrounding state handling: second moments are persistent, DDP aggregates sufficient statistics before the EMA, and checkpoint recomputation does not update the EMA twice. These engineering changes do not alter the non-checkpointed 124M optimizer architecture evaluated in the paper.
