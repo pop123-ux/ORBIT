@@ -27,7 +27,9 @@ optimizer = build_paper_baseline(
 
 Accepted names are `adamw`, `muon`, `normuon`, and `adamuon`; `adamuon_ref` is retained as an alias for the exact reference AdaMuon variant used by the historical campaign.
 
-Two small synthetic examples are provided:
+The same definitions are available from `experiments/run.py` for lightweight follow-up runs on the repository's shared model/data loop. This is intentionally a convenience experiment path rather than a reconstruction of the full broad tuning campaign; see [`../experiments/README.md`](../experiments/README.md).
+
+Two smaller synthetic examples are also provided:
 
 ```bash
 python examples/toy_baseline_step.py
