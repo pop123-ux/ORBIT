@@ -1,0 +1,39 @@
+{
+  "paper": "ORBIT: Function-Space Optimization for Rotary Query-Key Interactions",
+  "package_version": "0.1.0",
+  "model": {
+    "size": "124M",
+    "steps": 900,
+    "sequence_length": 512,
+    "batch_size": 8
+  },
+  "data": {
+    "dataset": "HuggingFaceFW/fineweb-edu",
+    "config": "sample-10BT",
+    "revision": "v1.0.0",
+    "validation_tokens": 400000,
+    "training_tokens": 12000000
+  },
+  "matched_tuning": {
+    "seed": 0,
+    "candidate_count": 10,
+    "selection_rule": "independent_winners_from_shared_grid",
+    "selected_config_id": "shared-04"
+  },
+  "optimizer": {
+    "lr": 0.0181771645661641,
+    "weight_decay": 0.005835070036773646,
+    "scalar_lr_mult": 0.49061509693684174,
+    "adamw_lr": 0.008917985967613777,
+    "momentum": 0.95,
+    "newton_schulz_steps": 5,
+    "functional_power": 1.0,
+    "metric_eps": 1e-05,
+    "metric_condition_cap": 100.0,
+    "deltas": [1, 2, 4, 8, 16, 32, 64, 128]
+  },
+  "primary_confirmation_seeds": [500, 501, 502, 503, 504, 505, 506, 507, 508, 509],
+  "ablation_seeds": [600, 601, 602, 603, 604, 605, 606, 607, 608, 609],
+  "crossed_recipe_seeds": [100, 101, 102, 103, 104],
+  "long_horizon_seeds": [400, 401]
+}
