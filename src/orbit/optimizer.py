@@ -50,8 +50,6 @@ def inverse_metric_power(
     a = m[..., 0, 0]
     b = m[..., 0, 1]
     d = m[..., 1, 1]
-    # Normalise before the quadratic formula so very large but finite covariance
-    # statistics do not overflow when squared.
     scale = torch.maximum(a.abs() + b.abs(), d.abs() + b.abs()).clamp_min(eps)
     an, bn, dn = a / scale, b / scale, d / scale
     centre = 0.5 * (an + dn)
@@ -65,7 +63,6 @@ def inverse_metric_power(
     lo = torch.maximum(lo, hi / cap)
     condition = hi / lo.clamp_min(eps)
 
-    # Restore the scale removed above before applying the matrix power.
     scale_factor = scale.pow(-0.5 * power)
     f_lo = lo.pow(-0.5 * power) * scale_factor
     f_hi = hi.pow(-0.5 * power) * scale_factor
@@ -81,18 +78,32 @@ def inverse_metric_power(
         f_hi - f_lo
     )[..., None, None] * projector_hi
 
-    # Exactly/near repeated eigenvalues are isotropic. Avoid an arbitrary
-    # projector constructed from division by a tiny eigengap.
     repeated = gap <= tolerance
     isotropic = (0.5 * (f_lo + f_hi))[..., None, None] * eye
     transform = torch.where(repeated[..., None, None], isotropic, transform)
 
-    # A non-finite covariance statistic means the auxiliary metric is invalid,
-    # not that the parameter update itself is invalid. The safest local fallback
-    # is therefore identity preconditioning for that pair.
     transform = torch.where(finite[..., None, None], transform, eye)
     condition = torch.where(finite, condition, torch.ones_like(condition))
     return transform, condition
+
+
+def auxiliary_decay_parameter_ids(model) -> set[int]:
+    """Return 2-D parameters that should stay on ORBIT's auxiliary AdamW path.
+
+    Native and adapted models may expose ``orbit_aux_decay_parameters()``.
+    Falling back to ``wte``/``lm_head`` keeps compatibility with the reference
+    OrbitGPT and historical checkpoints.
+    """
+    getter = getattr(model, "orbit_aux_decay_parameters", None)
+    if callable(getter):
+        return {id(param) for param in getter()}
+    excluded: set[int] = set()
+    for name in ("wte", "lm_head"):
+        module = getattr(model, name, None)
+        weight = getattr(module, "weight", None) if module is not None else None
+        if isinstance(weight, torch.nn.Parameter):
+            excluded.add(id(weight))
+    return excluded
 
 
 class Orbit(torch.optim.Optimizer):
@@ -102,10 +113,8 @@ class Orbit(torch.optim.Optimizer):
     tied LM head, biases and normalization vectors use AdamW-style updates. Q/K
     matrices first receive the same Muon candidate direction, then each 2-row
     RoPE frequency pair is left-preconditioned by an inverse power of the local
-    2x2 attention-logit sensitivity metric accumulated by ``RotaryAttention``.
-    A joint Frobenius restoration keeps the total Q+K update budget unchanged,
-    so the mechanism changes functional geometry rather than silently obtaining
-    a larger step.
+    2x2 attention-logit sensitivity metric accumulated by the model or adapter.
+    A joint Frobenius restoration keeps the total Q+K update budget unchanged.
 
     Variants are intentionally first-class for falsification:
       orbit          full RoPE-rotated 2x2 metric
@@ -153,9 +162,6 @@ class Orbit(torch.optim.Optimizer):
             ),
         )
         self.model = model
-        # Statistics are opt-in so baseline wall-clock measurements do not pay
-        # ORBIT's forward-pass covariance cost. All ORBIT ablations keep the
-        # collection path enabled, including identity, to isolate update rules.
         model.set_orbit_stat_collection(True)
         self.functional_power = float(functional_power)
         self.metric_eps = float(metric_eps)
@@ -167,7 +173,7 @@ class Orbit(torch.optim.Optimizer):
         self._diagnostic_sums: dict[str, torch.Tensor] = {}
         self._diagnostic_count = 0
 
-        excluded = {id(model.wte.weight), id(model.lm_head.weight)}
+        excluded = auxiliary_decay_parameter_ids(model)
         for pair in model.orbit_qk_pairs():
             self._meta[id(pair["q"])] = "q"
             self._meta[id(pair["k"])] = "k"
