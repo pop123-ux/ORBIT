@@ -53,6 +53,36 @@ aux multiplier   0.49061509693684174
 aux AdamW lr     0.008917991355665525
 ```
 
+## Runnable paper baselines
+
+`run.py` also exposes the non-ASTRO optimizer definitions used in the paper: `adamw`, `muon`, `normuon`, and `adamuon`, alongside ORBIT and its three mechanism controls. This is a convenience path for small follow-up experiments on the same model/data loop; it is **not** a recreation of the broad tuning campaign.
+
+For example:
+
+```bash
+python experiments/run.py \
+  --optimizer normuon \
+  --size 124M \
+  --steps 100 \
+  --seed 0 \
+  --lr 0.02 \
+  --scalar-lr-mult 0.1 \
+  --weight-decay 0.01 \
+  --token-cache /path/to/fineweb_edu_v1.0.0_12p4m.pt \
+  --output results/toy/normuon.json
+```
+
+For AdamW, `--beta2` is available explicitly; the default is `0.95`. The Muon-family definitions keep the fixed paper constants used by the campaign: momentum `0.95`, five Newton–Schulz steps, and auxiliary AdamW betas `(0.9, 0.95)`. AdaMuon is the published/reference variant used by the paper rather than the earlier exploratory implementation.
+
+For a much faster CPU-level API check, use:
+
+```bash
+python examples/toy_baseline_step.py
+python examples/toy_compare.py --steps 10
+```
+
+Those synthetic examples intentionally demonstrate only that the optimizers can be constructed and stepped on the same tiny model. They are not evidence for paper results.
+
 ## Auditing the tuning procedure
 
 To regenerate the exact ten shared candidates:
@@ -75,8 +105,8 @@ python experiments/matched.py select \
 
 The reported paper campaign selected `shared-04` for both optimizers. The frozen recipe is then used unchanged for all held-out Muon/ORBIT confirmation runs.
 
-Supported methods in `run.py` are `muon`, `orbit`, `orbit_identity`, `orbit_norope`, and `orbit_diag`.
+Supported methods in `run.py` are `adamw`, `muon`, `normuon`, `adamuon`, `orbit`, `orbit_identity`, `orbit_norope`, and `orbit_diag`.
 
 The canonical ORBIT package uses the same $R(+\Delta)$ optimizer-side transport as the paper's non-checkpointed 124M experiments. The package additionally makes second-moment state persistent, synchronizes statistics across DDP ranks, and suppresses duplicate EMA updates during checkpoint recomputation. Those engineering safeguards are intended for downstream use and do not change the primary 124M optimizer geometry.
 
-Secondary ASTRO/NorMuon/broad-campaign cells remain part of the full paper campaign because they use implementations outside this standalone package. They are not required to reproduce the primary matched Muon–ORBIT comparison.
+ASTRO remains intentionally outside this standalone repository. The broader paper campaign included it as context, but the ORBIT release keeps that separate research line out of the package.
