@@ -6,10 +6,18 @@ This document covers the ORBIT-specific model/optimizer interface and state.
 
 | File | Responsibility |
 | --- | --- |
-| `src/orbit/model.py` | RoPE attention, Q/K second-moment state, optimizer-side rotary metric construction |
+| `src/orbit/model.py` | reference RoPE attention, Q/K second-moment state, optimizer-side rotary metric construction |
+| `src/orbit/adapter.py` | explicit bridge from compatible external RoPE models to ORBIT's Q/K metric contract |
 | `src/orbit/optimizer.py` | Muon candidate, analytic $2\times2$ inverse metric, Q/K preconditioning |
 | `src/orbit/baselines.py` | matched Muon control used by repository tests |
 | `tests/test_correctness.py` | paper-aligned correctness regressions |
+| `tests/test_adapter.py` | external-model adapter regressions |
+
+## Why the interface is explicit
+
+ORBIT is function-aware: the optimizer needs to know which parameters form a Q/K pair, how their outputs map to heads and RoPE frequency pairs, which unrotated activations define the local statistics, and which 2-D parameters should remain on the auxiliary AdamW path. Those facts are properties of the model's computation, not of tensor shape alone.
+
+For that reason, the repository exposes a small explicit model contract and an `OrbitAdapter` rather than trying to identify Q/K semantics automatically. See [`ADAPTERS.md`](ADAPTERS.md) for the generic bridge, supported boundary, and guidance for architecture-specific extensions.
 
 ## Model contract
 
@@ -36,7 +44,13 @@ and the attention module provides
 attention_module.orbit_metrics(deltas, rotate=True, eps=...)
 ```
 
-The reference `OrbitGPT` exposes `wte` and `lm_head` so the auxiliary path can identify the embedding/head parameters explicitly.
+A model may additionally expose
+
+```python
+model.orbit_aux_decay_parameters()
+```
+
+to identify 2-D parameters such as embeddings and tied output heads that should use the auxiliary AdamW path. The reference `OrbitGPT` remains backward-compatible through its `wte` and `lm_head` attributes, while `OrbitAdapter` exposes the explicit method.
 
 ## Forward vs optimizer rotary convention
 
@@ -62,7 +76,7 @@ The regression suite checks the two conventions separately: autograd verifies th
 
 ## Second-moment state
 
-Each attention layer stores
+Each attention layer or adapter collector stores
 
 ```text
 orbit_q_second_moment  [n_head, n_freq, 2, 2]
@@ -76,17 +90,17 @@ These are persistent buffers.
 
 The reference model uses non-reentrant checkpointing. The original forward updates the second moments; the recomputation context calls `suspend_orbit_stat_collection()`. This keeps one second-moment update per logical training step.
 
-This is engineering hardening for downstream use. The primary 124M paper experiments did not use gradient checkpointing, so it does not change the optimizer geometry evaluated there.
+This is engineering hardening for downstream use. The primary 124M paper experiments did not use gradient checkpointing, so it does not change the optimizer geometry evaluated there. External models with custom checkpoint engines should follow the explicit guidance in [`ADAPTERS.md`](ADAPTERS.md) rather than assuming recomputation semantics are universal.
 
 ### Distributed training
 
-`_update_second_moments` forms unnormalized Q/K second-moment sums and a sample count. When `torch.distributed` is initialized, those sufficient statistics are reduced across ranks before normalization and before the EMA. Every replica therefore constructs the same ORBIT metric.
+`_update_second_moments` forms unnormalized Q/K second-moment sums and a sample count. When `torch.distributed` is initialized, those sufficient statistics are reduced across ranks before normalization and before the EMA. Every replica therefore constructs the same ORBIT metric. The generic adapter uses the same sufficient-statistic reduction rule.
 
 ## Q/K update path
 
 `Orbit._spectral_candidate` first constructs the Muon matrix candidate. For each Q/K pair, `Orbit._precondition_pair` then:
 
-1. requests $M_Q,M_K$ from the attention module;
+1. requests $M_Q,M_K$ from the attention module or adapter collector;
 2. optionally diagonalizes them for `orbit_diag`;
 3. computes $M^{-p/2}$ with `inverse_metric_power`;
 4. reshapes each candidate to `[head, frequency, 2, input_dimension]`;
@@ -95,7 +109,7 @@ This is engineering hardening for downstream use. The primary 124M paper experim
 
 This is an output-side left preconditioner. ORBIT does not construct the full parameter-space pullback through the Q/K input activation.
 
-Other hidden two-dimensional matrices stay on the matched spectral path.
+Other hidden two-dimensional matrices stay on the matched spectral path unless explicitly identified as auxiliary-decay parameters by the model/adapter contract.
 
 ## Learning-rate coupling
 
