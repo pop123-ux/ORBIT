@@ -1,6 +1,6 @@
 # Training
 
-Only ORBIT-specific training behavior is documented here. Final paper hyperparameters are intentionally not frozen in this file until the corrected post-audit campaign has been rerun.
+Only ORBIT-specific training behavior is documented here.
 
 ## Construction
 
@@ -19,7 +19,7 @@ optimizer = Orbit(
 )
 ```
 
-`deltas` are non-negative causal distances $\Delta=i-j$; the metric transports them with $R(-\Delta)$.
+`deltas` are non-negative causal separations $\Delta=i-j$. Forward RoPE attention contains $R(-\Delta)$, while the canonical ORBIT optimizer transports opposite-side second moments with $R(+\Delta)$.
 
 ## Scheduling
 
@@ -40,7 +40,7 @@ is stored as a fixed ratio. At step $t$,
 r_{\mathrm{aux}}\eta_{\mathrm{matrix},t}.
 ```
 
-Therefore a normal PyTorch scheduler can operate on the optimizer’s `lr` field:
+Therefore a normal PyTorch scheduler can operate on the optimizer's `lr` field:
 
 ```python
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -60,7 +60,7 @@ Enable checkpointing in the reference model with
 OrbitGPTConfig(gradient_checkpointing=True)
 ```
 
-Checkpoint recomputation runs with ORBIT second-moment collection suspended, so the EMA cadence is unchanged.
+The reusable implementation suspends ORBIT second-moment collection during checkpoint recomputation, so one logical forward/backward step contributes one EMA update. This is an engineering hardening relative to the historical exploratory 355M campaign; the paper's release evidence is centered on the non-checkpointed 124M experiments.
 
 ## DDP
 
@@ -90,7 +90,7 @@ optimizer.load_state_dict(state["optimizer"])
 scheduler.load_state_dict(state["scheduler"])
 ```
 
-`Orbit.load_state_dict` also migrates the pre-audit optimizer metadata that stored an independent `adamw_lr` field.
+`Orbit.load_state_dict` also migrates older optimizer metadata that stored an independent `adamw_lr` field.
 
 ## Diagnostics
 
