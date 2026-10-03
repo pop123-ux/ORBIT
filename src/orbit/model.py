@@ -85,11 +85,17 @@ class RotaryAttention(nn.Module):
         rotated = torch.cat((a * cos - b * sin, a * sin + b * cos), dim=-1)
         return rotated.flatten(-2)
 
-    def _causal_relative_rotation(self, delta: int) -> torch.Tensor:
-        """Return R(-delta) for causal distance delta = query_pos - key_pos >= 0."""
+    def _optimizer_transport_rotation(self, delta: int) -> torch.Tensor:
+        """Return ORBIT's optimizer-side R(+delta) transport.
+
+        ``delta`` is still the non-negative causal separation i-j. The forward
+        attention score contains R(-delta); ORBIT intentionally transports the
+        opposite-side second moments in the inverse orientation, R(+delta).
+        This is the orientation used by the optimizer evaluated in the paper.
+        """
         if delta < 0:
             raise ValueError("ORBIT deltas are causal distances i-j and must be non-negative")
-        angle = -self.inv_freq.float() * float(delta)
+        angle = self.inv_freq.float() * float(delta)
         c, s = angle.cos(), angle.sin()
         return torch.stack(
             (
@@ -119,8 +125,6 @@ class RotaryAttention(nn.Module):
         k_sum = torch.einsum("bhtfi,bhtfj->hfij", k2, k2)
         count = q_sum.new_tensor(float(max(1, q.size(0) * q.size(2))))
 
-        # DDP ranks must condition on the same statistics. Aggregate sufficient
-        # statistics before the EMA so every replica applies the same Q/K update.
         if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
             packed = torch.stack((q_sum, k_sum), dim=0)
             dist.all_reduce(packed, op=dist.ReduceOp.SUM)
@@ -130,9 +134,6 @@ class RotaryAttention(nn.Module):
         q_second_moment = q_sum / count.clamp_min(1.0)
         k_second_moment = k_sum / count.clamp_min(1.0)
 
-        # Keep the first observed batch un-smoothed without forcing a device-to-host
-        # synchronization. orbit_stats_seen is persistent so resumed runs preserve
-        # the exact EMA state.
         beta = (self.orbit_stats_seen > 0).to(q_second_moment.dtype) * self.config.stats_beta
         one_minus_beta = 1.0 - beta
         self.orbit_q_second_moment.mul_(beta).add_(q_second_moment * one_minus_beta)
@@ -147,15 +148,21 @@ class RotaryAttention(nn.Module):
         rotate: bool = True,
         eps: float = 1e-5,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return the local Q/K logit-sensitivity metrics.
+        """Return ORBIT's local optimizer-side Q/K metrics.
 
-        For causal distance delta = i-j >= 0, applying RoPE to q_i and k_j gives
+        For causal distance delta=i-j>=0, the forward score is
 
-            q_i^T R(j-i) k_j = q_i^T R(-delta) k_j.
+            q_i^T R(-delta) k_j.
 
-        A Q perturbation therefore sees R(-delta) S_k R(-delta)^T, while a K
-        perturbation sees R(-delta)^T S_q R(-delta), where S denotes the
-        uncentered second moment of the opposite-side activation pair.
+        The paper-trained ORBIT optimizer does not use that exact score-side
+        pullback. Instead it defines a RoPE-informed optimizer transport using
+        the inverse orientation R(+delta):
+
+            M_Q = E[R(+delta) S_K R(+delta)^T]
+            M_K = E[R(+delta)^T S_Q R(+delta)].
+
+        This is a deliberate optimizer geometry, not an exact Fisher/Hessian or
+        exact pullback of the causal attention score.
         """
         q_second_moment = self.orbit_q_second_moment.float()
         k_second_moment = self.orbit_k_second_moment.float()
@@ -169,7 +176,7 @@ class RotaryAttention(nn.Module):
             if not ds:
                 ds = (0,)
             for delta in ds:
-                r = self._causal_relative_rotation(delta)
+                r = self._optimizer_transport_rotation(delta)
                 rt = r.transpose(-1, -2)
                 mq.add_(r @ k_second_moment @ rt)
                 mk.add_(rt @ q_second_moment @ r)
