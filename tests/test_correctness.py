@@ -25,7 +25,7 @@ def tiny_config(**overrides):
     return OrbitGPTConfig(**values)
 
 
-def test_rope_score_metric_and_autograd_share_the_causal_sign():
+def test_forward_rope_sign_and_optimizer_transport_orientation_are_explicit():
     attn = RotaryAttention(tiny_config(n_embd=2), layer_idx=0)
     q = torch.zeros(1, 1, 9, 2, requires_grad=True)
     k = torch.zeros(1, 1, 9, 2)
@@ -35,12 +35,25 @@ def test_rope_score_metric_and_autograd_share_the_causal_sign():
         q[0, 0, 8] = q_vec
         k[0, 0, 0] = k_vec
 
+    # Forward attention uses R(-delta).
     score = attn._apply_rope(q)[0, 0, 8] @ attn._apply_rope(k)[0, 0, 0]
-    r = attn._causal_relative_rotation(8)[0, 0]
-    assert torch.allclose(score, q_vec @ (r @ k_vec), atol=1e-6, rtol=1e-6)
+    angle = -attn.inv_freq.float() * 8.0
+    c, sn = angle.cos(), angle.sin()
+    r_forward = torch.stack(
+        (
+            torch.stack((c, -sn), dim=-1),
+            torch.stack((sn, c), dim=-1),
+        ),
+        dim=-2,
+    ).unsqueeze(0)[0, 0]
+    assert torch.allclose(score, q_vec @ (r_forward @ k_vec), atol=1e-6, rtol=1e-6)
 
     (grad_q,) = torch.autograd.grad(score, q)
-    assert torch.allclose(grad_q[0, 0, 8], r @ k_vec, atol=1e-6, rtol=1e-6)
+    assert torch.allclose(grad_q[0, 0, 8], r_forward @ k_vec, atol=1e-6, rtol=1e-6)
+
+    # ORBIT's paper-trained optimizer metric deliberately uses R(+delta).
+    r_opt = attn._optimizer_transport_rotation(8)[0, 0]
+    assert torch.allclose(r_opt, r_forward.T, atol=1e-6, rtol=1e-6)
 
     with torch.no_grad():
         k_moment = torch.tensor([[4.0, 1.3], [1.3, 0.7]])
@@ -49,8 +62,8 @@ def test_rope_score_metric_and_autograd_share_the_causal_sign():
         attn.orbit_q_second_moment.copy_(q_moment.view(1, 1, 2, 2))
 
     mq, mk = attn.orbit_metrics((8,), rotate=True, eps=0.0)
-    assert torch.allclose(mq[0, 0], r @ k_moment @ r.T, atol=1e-6, rtol=1e-6)
-    assert torch.allclose(mk[0, 0], r.T @ q_moment @ r, atol=1e-6, rtol=1e-6)
+    assert torch.allclose(mq[0, 0], r_opt @ k_moment @ r_opt.T, atol=1e-6, rtol=1e-6)
+    assert torch.allclose(mk[0, 0], r_opt.T @ q_moment @ r_opt, atol=1e-6, rtol=1e-6)
 
 
 def test_negative_delta_is_rejected():
