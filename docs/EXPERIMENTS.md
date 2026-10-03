@@ -49,6 +49,10 @@ For strict reproduction of the paper's central result, keep the following fixed:
 - uncentered Q/K second moments with $\beta=0.95$;
 - inverse-square-root preconditioning with $10^{-5}I$ regularization and condition cap 100;
 - one joint Q/K Frobenius restoration factor;
-- the matched hyperparameter recipe and paired seeds reported by the manuscript.
+- the exact frozen matched recipe and paired seeds in [`configs/paper_124m_matched.json`](../configs/paper_124m_matched.json).
 
-The repository's [`experiments/`](../experiments/) directory provides a compact reproduction-oriented runner, while the full historical paper campaign remains in the paper-development repository used to generate the manuscript artifacts.
+The primary held-out seed set is `500` through `509`. The matched tuning seed is `0`, and both optimizers selected `shared-04` from the same deterministic ten-candidate grid. The config file records the full-precision learning rate, weight decay, auxiliary multiplier, data specification, and secondary study seed sets.
+
+For direct reproduction, [`experiments/paper_run.py`](../experiments/paper_run.py) reads the frozen config so users do not need to rediscover the primary recipe. [`experiments/matched.py`](../experiments/matched.py) remains available to audit or rerun the selection procedure itself.
+
+The full historical paper campaign remains in the paper-development repository used to generate the manuscript artifacts; the standalone package focuses on the primary Muon–ORBIT result and ORBIT-specific mechanism variants.
