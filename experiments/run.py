@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal ORBIT paper-protocol runner.
+"""Minimal ORBIT experiment runner.
 
-This script reproduces the central matched Muon/ORBIT and ORBIT-ablation cells.
-It writes one self-contained JSON file per run; it does not generate manuscript
-artifacts or JSONL campaign logs.
+The primary frozen Muon/ORBIT paper cells are driven by ``paper_run.py``.
+This lower-level runner also exposes the non-ASTRO paper baselines so users can
+exercise the tested optimizer definitions on the same model/data loop without
+recreating the full broad campaign, tuning grid, or manuscript pipeline.
 """
 
 from __future__ import annotations
@@ -19,7 +20,13 @@ from pathlib import Path
 
 import torch
 
-from orbit import Muon, Orbit, OrbitGPT, OrbitGPTConfig
+from orbit import (
+    Muon,
+    Orbit,
+    OrbitGPT,
+    OrbitGPTConfig,
+    build_paper_baseline,
+)
 
 
 FINEWEB_DATASET = "HuggingFaceFW/fineweb-edu"
@@ -35,7 +42,10 @@ SIZES = {
 }
 
 OPTIMIZERS = (
+    "adamw",
     "muon",
+    "normuon",
+    "adamuon",
     "orbit",
     "orbit_identity",
     "orbit_norope",
@@ -50,6 +60,7 @@ def source_digest() -> str:
         root / "src" / "orbit" / "model.py",
         root / "src" / "orbit" / "optimizer.py",
         root / "src" / "orbit" / "baselines.py",
+        root / "src" / "orbit" / "paper_baselines.py",
         root / "experiments" / "matched.py",
     ]
     h = hashlib.sha256()
@@ -141,6 +152,16 @@ def lr_factor(step: int, steps: int) -> float:
 
 
 def build_optimizer(args, model):
+    if args.optimizer in {"adamw", "normuon", "adamuon"}:
+        return build_paper_baseline(
+            args.optimizer,
+            model,
+            lr=args.lr,
+            scalar_lr_mult=args.scalar_lr_mult,
+            weight_decay=args.weight_decay,
+            beta2=args.beta2,
+        )
+
     aux_lr = args.lr * args.scalar_lr_mult
     common = dict(
         lr=args.lr,
@@ -262,6 +283,29 @@ def run(args) -> dict:
     mean_loss = sum(values) / len(values)
     diagnostics = optimizer.diagnostics() if isinstance(optimizer, Orbit) else {}
 
+    config = {
+        "lr": args.lr,
+        "scalar_lr_mult": args.scalar_lr_mult,
+        "weight_decay": args.weight_decay,
+        "beta2": args.beta2,
+    }
+    if args.optimizer != "adamw":
+        config.update(
+            {
+                "momentum": 0.95,
+                "newton_schulz_steps": 5,
+            }
+        )
+    if args.optimizer.startswith("orbit"):
+        config.update(
+            {
+                "functional_power": 1.0,
+                "metric_eps": 1e-5,
+                "metric_condition_cap": 100.0,
+                "deltas": [1, 2, 4, 8, 16, 32, 64, 128],
+            }
+        )
+
     return {
         "schema_version": 1,
         "status": "ok",
@@ -271,17 +315,7 @@ def run(args) -> dict:
         "seed": args.seed,
         "sequence_length": args.seq,
         "batch_size": batch,
-        "config": {
-            "lr": args.lr,
-            "scalar_lr_mult": args.scalar_lr_mult,
-            "weight_decay": args.weight_decay,
-            "momentum": 0.95,
-            "newton_schulz_steps": 5,
-            "functional_power": 1.0,
-            "metric_eps": 1e-5,
-            "metric_condition_cap": 100.0,
-            "deltas": [1, 2, 4, 8, 16, 32, 64, 128],
-        },
+        "config": config,
         "val_loss": mean_loss,
         "val_losses": values,
         "seconds": elapsed,
@@ -313,6 +347,12 @@ def parse_args():
     p.add_argument("--lr", type=float)
     p.add_argument("--scalar-lr-mult", type=float)
     p.add_argument("--weight-decay", type=float)
+    p.add_argument(
+        "--beta2",
+        type=float,
+        default=0.95,
+        help="AdamW beta2; the Muon-family auxiliary path remains fixed at the paper value 0.95",
+    )
     p.add_argument("--seq", type=int, default=512)
     p.add_argument("--log-every", type=int, default=25)
     p.add_argument("--device", default="auto")
