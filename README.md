@@ -9,7 +9,7 @@
 
 ORBIT modifies the Muon candidate update for rotary Query/Key projections using a compact optimizer-side geometry built from RoPE frequency structure and opposite-side Q/K second moments. The canonical implementation in this repository matches the optimizer architecture used for the paper's primary 124M experiments: non-negative causal separations are transported with the optimizer orientation $R(+\Delta)$, followed by inverse-square-root preconditioning and joint Q/K Frobenius restoration.
 
-[Method](docs/METHOD.md) · [Architecture](docs/ARCHITECTURE.md) · [Adapters](docs/ADAPTERS.md) · [Training](docs/TRAINING.md) · [Experiment status](docs/EXPERIMENTS.md)
+[Method](docs/METHOD.md) · [Architecture](docs/ARCHITECTURE.md) · [Adapters](docs/ADAPTERS.md) · [Paper baselines](docs/BASELINES.md) · [Training](docs/TRAINING.md) · [Experiment status](docs/EXPERIMENTS.md)
 
 ## Definition
 
@@ -150,6 +150,31 @@ The v0.1 generic adapter targets separate Q/K linear projections with ordinary m
 
 See [`docs/ADAPTERS.md`](docs/ADAPTERS.md) for the integration contract, checkpointing notes, and research-extension guidance.
 
+## Paper-tested baselines
+
+The package also exposes the non-ASTRO optimizer definitions used around ORBIT in the paper: AdamW, Muon, NorMuon, and the published/reference AdaMuon variant.
+
+```python
+from orbit import build_paper_baseline
+
+optimizer = build_paper_baseline(
+    "normuon",
+    model,
+    lr=0.02,
+    scalar_lr_mult=0.1,
+    weight_decay=0.05,
+)
+```
+
+For a quick API-level exercise rather than a paper reproduction:
+
+```bash
+python examples/toy_baseline_step.py
+python examples/toy_compare.py --steps 10
+```
+
+ASTRO is intentionally not vendored here. See [`docs/BASELINES.md`](docs/BASELINES.md) for the exact distinctions among the included baseline update rules.
+
 ## Exact primary-paper reproduction
 
 The frozen primary recipe and seed lists are stored in [`configs/paper_124m_matched.json`](configs/paper_124m_matched.json). Users do **not** need to rerun the ten-candidate tuning grid merely to reproduce the headline held-out comparison.
@@ -216,10 +241,13 @@ src/orbit/
     optimizer.py
     adapter.py
     baselines.py
+    paper_baselines.py
     model.py
 
 examples/
     quickstart.py
+    toy_baseline_step.py
+    toy_compare.py
 
 experiments/
     run.py
@@ -235,6 +263,7 @@ docs/
     METHOD.md
     ARCHITECTURE.md
     ADAPTERS.md
+    BASELINES.md
     TRAINING.md
     EXPERIMENTS.md
 
@@ -242,6 +271,7 @@ tests/
     test_adapter.py
     test_orbit.py
     test_muon_control.py
+    test_paper_baselines.py
     test_correctness.py
     test_experiment_protocol.py
     test_docs.py
