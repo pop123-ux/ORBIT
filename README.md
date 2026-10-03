@@ -9,7 +9,7 @@
 
 ORBIT modifies the Muon candidate update for rotary Query/Key projections using a compact optimizer-side geometry built from RoPE frequency structure and opposite-side Q/K second moments. The canonical implementation in this repository matches the optimizer architecture used for the paper's primary 124M experiments: non-negative causal separations are transported with the optimizer orientation $R(+\Delta)$, followed by inverse-square-root preconditioning and joint Q/K Frobenius restoration.
 
-[Method](docs/METHOD.md) · [Architecture](docs/ARCHITECTURE.md) · [Training](docs/TRAINING.md) · [Experiment status](docs/EXPERIMENTS.md)
+[Method](docs/METHOD.md) · [Architecture](docs/ARCHITECTURE.md) · [Adapters](docs/ADAPTERS.md) · [Training](docs/TRAINING.md) · [Experiment status](docs/EXPERIMENTS.md)
 
 ## Definition
 
@@ -122,7 +122,60 @@ optimizer.step()
 optimizer.zero_grad(set_to_none=True)
 ```
 
-The included `OrbitGPT` is the reference model interface. Integrating a different RoPE model requires exposing its Q/K pairs and the modules that construct the ORBIT metrics; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+## Adapting another RoPE model
+
+ORBIT is function-aware, so it needs architectural information that cannot be inferred safely from shape alone: which matrices form Q/K pairs, how those outputs map to heads and RoPE frequency pairs, where the unrotated activations appear, and which 2-D parameters should stay on the auxiliary AdamW path.
+
+The repository therefore provides an explicit adapter rather than silently guessing those semantics:
+
+```python
+from orbit import Orbit, OrbitAdapter, QKPairSpec
+
+base_model = ...
+pairs = [
+    QKPairSpec(
+        q_proj=layer.self_attn.q_proj,
+        k_proj=layer.self_attn.k_proj,
+        n_head=base_model.config.num_attention_heads,
+        rope_base=getattr(base_model.config, "rope_theta", 10_000.0),
+    )
+    for layer in base_model.layers
+]
+
+model = OrbitAdapter(base_model, pairs).to(device)
+optimizer = Orbit(model, lr=0.02, adamw_lr=3e-4, weight_decay=0.05)
+```
+
+The v0.1 generic adapter targets separate Q/K linear projections with ordinary multi-head attention, matching the architecture evaluated in the paper. GQA/MQA, fused QKV, unusual RoPE layouts, QK normalization, or other architecture-specific transformations should use a native integration or purpose-built adapter instead of a shape-only approximation. This explicit boundary is deliberate: extending function-aware optimization requires encoding the computation a parameter actually performs.
+
+See [`docs/ADAPTERS.md`](docs/ADAPTERS.md) for the integration contract, checkpointing notes, and research-extension guidance.
+
+## Exact primary-paper reproduction
+
+The frozen primary recipe and seed lists are stored in [`configs/paper_124m_matched.json`](configs/paper_124m_matched.json). Users do **not** need to rerun the ten-candidate tuning grid merely to reproduce the headline held-out comparison.
+
+Prepare the fixed FineWeb-Edu token pool:
+
+```bash
+pip install -e ".[experiments]"
+python experiments/run.py \
+  --prepare-data \
+  --token-cache /path/to/fineweb_edu_v1.0.0_12p4m.pt
+```
+
+Then run one frozen primary cell directly:
+
+```bash
+python experiments/paper_run.py \
+  --optimizer orbit \
+  --seed 500 \
+  --token-cache /path/to/fineweb_edu_v1.0.0_12p4m.pt \
+  --output results/paper/orbit-seed500.json
+```
+
+Repeat for seeds `500` through `509` and for `--optimizer muon` to reproduce the paired primary comparison. The exact selected `shared-04` learning rate, weight decay, auxiliary multiplier, data specification, and study seed sets are machine-readable in the config file.
+
+The original ten-candidate selector remains in [`experiments/matched.py`](experiments/matched.py) for users who want to audit or rerun the selection procedure itself.
 
 ## Correctness contract
 
@@ -137,6 +190,7 @@ The regression suite fixes the implementation choices that are easy to make ambi
 - DDP ranks aggregate sufficient statistics before the EMA;
 - second-moment state survives checkpoint/resume;
 - ordinary PyTorch LR schedulers scale the matrix and auxiliary paths together;
+- the external-model adapter is tested for statistic collection, training, persistence, parameter routing, and rejection of ambiguous GQA/MQA mappings;
 - diagnostic host synchronization is deferred until `diagnostics()` is requested.
 
 The checkpoint/DDP/state handling above is engineering hardening for reuse. It preserves the paper-trained $R(+\Delta)$ optimizer geometry while making the package safer for longer or distributed runs.
@@ -160,6 +214,7 @@ Orbit(model, variant="orbit_identity")
 ```text
 src/orbit/
     optimizer.py
+    adapter.py
     baselines.py
     model.py
 
@@ -168,19 +223,27 @@ examples/
 
 experiments/
     run.py
+    paper_run.py
     matched.py
     README.md
+
+configs/
+    orbit.json
+    paper_124m_matched.json
 
 docs/
     METHOD.md
     ARCHITECTURE.md
+    ADAPTERS.md
     TRAINING.md
     EXPERIMENTS.md
 
 tests/
+    test_adapter.py
     test_orbit.py
     test_muon_control.py
     test_correctness.py
+    test_experiment_protocol.py
     test_docs.py
 ```
 
@@ -192,9 +255,11 @@ The reusable implementation additionally suppresses duplicate statistic updates 
 
 See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for the evidence boundary and reproduction notes.
 
-## Citation
+## Release and citation
 
-Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
+Package version `0.1.0` is the first public-release target. [`CHANGELOG.md`](CHANGELOG.md) records the release contents, and [`RELEASE.md`](RELEASE.md) contains the final public/tag checklist. The immutable `v0.1.0` tag should be created from the final manually reviewed public commit.
+
+Machine-readable citation metadata is in [`CITATION.cff`](CITATION.cff).
 
 ## License
 
