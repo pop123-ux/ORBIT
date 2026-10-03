@@ -11,6 +11,7 @@ DOCS = [
     ROOT / "docs" / "METHOD.md",
     ROOT / "docs" / "ARCHITECTURE.md",
     ROOT / "docs" / "ADAPTERS.md",
+    ROOT / "docs" / "BASELINES.md",
     ROOT / "docs" / "EXPERIMENTS.md",
     ROOT / "docs" / "TRAINING.md",
     ROOT / "experiments" / "README.md",
