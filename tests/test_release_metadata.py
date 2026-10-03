@@ -12,14 +12,24 @@ import orbit
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _matched_module():
-    spec = importlib.util.spec_from_file_location(
-        "orbit_matched_release_check", ROOT / "experiments" / "matched.py"
-    )
+def _load_script_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _matched_module():
+    return _load_script_module(
+        "orbit_matched_release_check", ROOT / "experiments" / "matched.py"
+    )
+
+
+def _paper_run_module():
+    return _load_script_module(
+        "orbit_paper_run_release_check", ROOT / "experiments" / "paper_run.py"
+    )
 
 
 def test_release_versions_are_consistent():
@@ -64,3 +74,13 @@ def test_paper_seed_sets_match_campaign_protocol():
     assert config["ablation_seeds"] == list(range(600, 610))
     assert config["crossed_recipe_seeds"] == list(range(100, 105))
     assert config["long_horizon_seeds"] == [400, 401]
+
+
+def test_paper_runner_routes_primary_and_ablation_seed_sets():
+    paper_run = _paper_run_module()
+    config = json.loads((ROOT / "configs" / "paper_124m_matched.json").read_text())
+
+    for optimizer in ("muon", "orbit"):
+        assert paper_run.expected_seeds(config, optimizer) == list(range(500, 510))
+    for optimizer in ("orbit_identity", "orbit_norope", "orbit_diag"):
+        assert paper_run.expected_seeds(config, optimizer) == list(range(600, 610))
