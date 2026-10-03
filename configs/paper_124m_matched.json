@@ -24,7 +24,7 @@
     "lr": 0.0181771645661641,
     "weight_decay": 0.005835070036773646,
     "scalar_lr_mult": 0.49061509693684174,
-    "adamw_lr": 0.008917985967613777,
+    "adamw_lr": 0.008917991355665525,
     "momentum": 0.95,
     "newton_schulz_steps": 5,
     "functional_power": 1.0,
