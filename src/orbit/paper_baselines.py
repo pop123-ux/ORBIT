@@ -5,7 +5,7 @@ import math
 import torch
 
 from .baselines import Muon
-from .optimizer import auxiliary_decay_parameter_ids, newton_schulz
+from .optimizer import newton_schulz
 
 PAPER_BASELINE_NAMES = ("adamw", "muon", "normuon", "adamuon")
 
@@ -100,6 +100,9 @@ class PublishedAdaMuon(Muon):
             / update.norm().clamp_min(group["eps"])
         )
         return (update * rms_scale).to(param.dtype)
+
+
+AdaMuon = PublishedAdaMuon
 
 
 def build_paper_baseline(
