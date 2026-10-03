@@ -7,7 +7,7 @@
 
 **Function-Space Optimization for Rotary Query-Key Interactions**
 
-ORBIT modifies the Muon candidate update for rotary Query/Key projections using a local metric derived from the causal RoPE score. The paper is the method specification; this repository mirrors its sign convention, second-moment definition, preconditioner, restoration rule, and training-state semantics.
+ORBIT modifies the Muon candidate update for rotary Query/Key projections using a compact optimizer-side geometry built from RoPE frequency structure and opposite-side Q/K second moments. The canonical implementation in this repository matches the optimizer architecture used for the paper's primary 124M experiments: non-negative causal separations are transported with the optimizer orientation $R(+\Delta)$, followed by inverse-square-root preconditioning and joint Q/K Frobenius restoration.
 
 [Method](docs/METHOD.md) · [Architecture](docs/ARCHITECTURE.md) · [Training](docs/TRAINING.md) · [Experiment status](docs/EXPERIMENTS.md)
 
@@ -19,7 +19,7 @@ For a query at position $i$ attending to a causal key at $j\le i$, define
 \Delta=i-j\ge0.
 ```
 
-The RoPE convention used here gives
+The forward RoPE attention interaction is
 
 ```math
 (R_f(i)q_{i,f})^\top(R_f(j)k_{j,f})
@@ -27,7 +27,7 @@ The RoPE convention used here gives
 q_{i,f}^\top R_f(-\Delta)k_{j,f}.
 ```
 
-Let the unrotated per-frequency **uncentered second moments** be
+ORBIT deliberately uses the inverse orientation as an **optimizer-side rotary transport**. Let the unrotated per-frequency uncentered second moments be
 
 ```math
 S_{Q,f}=\mathbb E[q_fq_f^\top],
@@ -35,14 +35,14 @@ S_{Q,f}=\mathbb E[q_fq_f^\top],
 S_{K,f}=\mathbb E[k_fk_f^\top].
 ```
 
-ORBIT defines
+The paper-trained ORBIT metric is
 
 ```math
 M_{Q,f}
 =
 \mathbb E_{\Delta}
 \left[
-R_f(-\Delta)S_{K,f}R_f(-\Delta)^\top
+R_f(+\Delta)S_{K,f}R_f(+\Delta)^\top
 \right],
 ```
 
@@ -51,7 +51,7 @@ M_{K,f}
 =
 \mathbb E_{\Delta}
 \left[
-R_f(-\Delta)^\top S_{Q,f}R_f(-\Delta)
+R_f(+\Delta)^\top S_{Q,f}R_f(+\Delta)
 \right].
 ```
 
@@ -60,6 +60,8 @@ The expectation is approximated by a uniform average over
 ```math
 \mathcal D=\{1,2,4,8,16,32,64,128\}.
 ```
+
+This transport is a designed optimization geometry, not an exact Fisher/Hessian or exact pullback of the causal attention score. It uses the known RoPE coordinate structure and opposite-side activation statistics to reshape the Q/K update.
 
 Muon produces candidates $U_Q,U_K$. ORBIT applies
 
@@ -79,7 +81,7 @@ then uses one shared scalar $\rho$ so that
 \lVert U_K\rVert_F^2.
 ```
 
-These $2\times2$ metrics are output-coordinate factors used as left preconditioners; they are not complete parameter-space pullbacks and deliberately omit the input-activation factor that an exact pullback would contain. The inverse square root whitens this local quadratic metric, while the joint Frobenius restoration fixes the aggregate Q/K parameter-space step magnitude. The derivation is in [`docs/METHOD.md`](docs/METHOD.md).
+The result is a direction-changing Q/K preconditioner with the same aggregate Q/K step budget as the underlying Muon candidates. See [`docs/METHOD.md`](docs/METHOD.md) for the full definition.
 
 ## Install
 
@@ -126,16 +128,18 @@ The included `OrbitGPT` is the reference model interface. Integrating a differen
 
 The regression suite fixes the implementation choices that are easy to make ambiguous:
 
-- `deltas` are non-negative causal distances $i-j$ and metric transport uses $R(-\Delta)$;
-- an autograd score-gradient test verifies the same sign convention independently of the metric code;
+- `deltas` are non-negative causal distances $\Delta=i-j$;
+- forward attention uses $R(-\Delta)$ while ORBIT's optimizer-side transport uses $R(+\Delta)$;
 - the $2\times2$ inverse metric is checked against a float64 eigendecomposition over multiple scales and powers;
 - the joint Q/K Frobenius budget is tested directly;
 - `orbit_identity` is checked against the matched Muon control;
-- checkpoint recomputation contributes no duplicate second-moment update;
+- checkpoint recomputation contributes no duplicate second-moment update in the reusable reference implementation;
 - DDP ranks aggregate sufficient statistics before the EMA;
 - second-moment state survives checkpoint/resume;
 - ordinary PyTorch LR schedulers scale the matrix and auxiliary paths together;
 - diagnostic host synchronization is deferred until `diagnostics()` is requested.
+
+The checkpoint/DDP/state handling above is engineering hardening for reuse. It preserves the paper-trained $R(+\Delta)$ optimizer geometry while making the package safer for longer or distributed runs.
 
 ## Variants
 
@@ -146,8 +150,8 @@ Orbit(model, variant="orbit_diag")
 Orbit(model, variant="orbit_identity")
 ```
 
-- `orbit` — full transported $2\times2$ metric.
-- `orbit_norope` — opposite-side second moment without relative-position transport.
+- `orbit` — full $R(+\Delta)$ transported $2\times2$ metric.
+- `orbit_norope` — opposite-side second moment without rotary transport.
 - `orbit_diag` — transported metric with off-diagonal coupling removed.
 - `orbit_identity` — statistics path retained, functional preconditioner disabled.
 
@@ -182,9 +186,11 @@ tests/
 
 ## Experiment status
 
-The pre-release audit changed the implementation that generated the earlier paper campaign. Those historical numerical results are **not release evidence for the corrected method**.
+The paper's primary 124M experiments evaluated the $R(+\Delta)$ optimizer-side transport defined above. The repository therefore treats that architecture as canonical. A later audit clarified that the forward RoPE score itself contains $R(-\Delta)$; the manuscript and repository now state explicitly that ORBIT's opposite orientation is an optimizer design choice rather than an exact causal-score pullback.
 
-The corrected primary protocol is baseline-selected: Muon alone is tuned over ten deterministic 124M/900-step candidates, its lowest-loss recipe is frozen, and that same recipe is then used for the held-out Muon–ORBIT comparison and ORBIT ablations. [`experiments/matched.py`](experiments/matched.py) reproduces the candidate grid and selection rule; [`experiments/run.py`](experiments/run.py) executes individual runs. Corrected per-seed records will be committed only after the post-audit campaign is complete. See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
+The reusable implementation additionally suppresses duplicate statistic updates during gradient-checkpoint recomputation and persists ORBIT statistics across checkpoints. Because the historical 355M exploratory run used the earlier checkpoint behavior, it is not treated as release evidence for the reusable package. The primary 124M matched comparison, ablations, crossed-recipe experiment, broad 124M context, and 124M long-horizon transfer do not use gradient checkpointing and correspond to the canonical optimizer geometry.
+
+See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for the evidence boundary and reproduction notes.
 
 ## Citation
 
