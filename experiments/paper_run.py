@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one paper-matched ORBIT/Muon cell from the frozen release config."""
+"""Run one frozen ORBIT paper cell from the release config."""
 
 from __future__ import annotations
 
@@ -12,11 +12,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "configs" / "paper_124m_matched.json"
+PRIMARY_OPTIMIZERS = {"muon", "orbit"}
+ABLATION_OPTIMIZERS = {"orbit_identity", "orbit_norope", "orbit_diag"}
+OPTIMIZERS = tuple(sorted(PRIMARY_OPTIMIZERS | ABLATION_OPTIMIZERS))
+
+
+def expected_seeds(config: dict, optimizer: str) -> list[int]:
+    """Return the frozen paper seed set appropriate for one optimizer cell."""
+    if optimizer in PRIMARY_OPTIMIZERS:
+        key = "primary_confirmation_seeds"
+    elif optimizer in ABLATION_OPTIMIZERS:
+        key = "ablation_seeds"
+    else:  # defensive guard for programmatic callers
+        raise ValueError(f"unsupported paper optimizer {optimizer!r}")
+    return [int(x) for x in config[key]]
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--optimizer", choices=("muon", "orbit", "orbit_identity", "orbit_norope", "orbit_diag"), required=True)
+    p.add_argument("--optimizer", choices=OPTIMIZERS, required=True)
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--token-cache", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
@@ -24,7 +38,7 @@ def parse_args():
     p.add_argument(
         "--allow-nonprimary-seed",
         action="store_true",
-        help="allow a seed outside the paper's 500-509 primary confirmation set",
+        help="allow a seed outside the frozen paper seed set for the selected optimizer",
     )
     return p.parse_args()
 
@@ -32,11 +46,11 @@ def parse_args():
 def main() -> None:
     args = parse_args()
     config = json.loads(args.config.read_text())
-    seeds = [int(x) for x in config["primary_confirmation_seeds"]]
+    seeds = expected_seeds(config, args.optimizer)
     if args.seed not in seeds and not args.allow_nonprimary_seed:
         raise SystemExit(
-            f"seed {args.seed} is not a primary paper seed; expected one of {seeds}. "
-            "Pass --allow-nonprimary-seed for an exploratory run."
+            f"seed {args.seed} is not in the frozen paper seed set for {args.optimizer}; "
+            f"expected one of {seeds}. Pass --allow-nonprimary-seed for an exploratory run."
         )
 
     model = config["model"]
