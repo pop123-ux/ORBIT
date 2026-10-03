@@ -1,60 +1,54 @@
 # Experiment status
 
-The manuscript is the source of truth for the experimental protocol. A pre-release correctness audit changed the ORBIT implementation used by the earlier campaign, so the historical numerical results are retained only as development provenance and are **not release evidence**.
+The paper's primary experiments were run with ORBIT's optimizer-side $R(+\Delta)$ rotary transport. That architecture is now the canonical method documented by this repository.
 
-## Why the campaign must be rerun
+## What the audit clarified
 
-Two findings affect paper claims directly.
-
-First, the earlier full ORBIT path transported the local metric with $R(+\Delta)$ even though the reference model’s causal RoPE score is
+For causal separation
 
 ```math
-q_{i,f}^{\top}R_f(-\Delta)k_{j,f},
-\qquad
-\Delta=i-j\ge0.
+\Delta=i-j\ge0,
 ```
 
-The corrected implementation and paper now use the same $R(-\Delta)$ convention.
+the **forward** RoPE attention score contains
 
-Second, gradient-checkpoint recomputation previously updated the Q/K second-moment EMA a second time. The corrected implementation suppresses statistics collection during recomputation, so the 355M cells must also be rerun under the intended EMA cadence.
+```math
+q_{i,f}^{\top}R_f(-\Delta)k_{j,f}.
+```
 
-## Affected evidence
+The historical ORBIT implementation used
 
-Every result containing the old **full ORBIT** implementation must be regenerated, including:
+```math
+R_f(+\Delta)
+```
 
-- matched Muon–ORBIT tuning and held-out confirmation;
-- full ORBIT vs identity, no-RoPE, and diagonal controls;
-- cross-configuration cells containing ORBIT;
-- longer-horizon ORBIT comparisons;
-- 355M ORBIT comparisons;
-- the broad independently selected ORBIT cell.
+when transporting opposite-side Q/K second moments to construct the optimizer metric. The release now documents this explicitly as an optimizer-side design choice rather than describing it as the exact score-side quadratic pullback.
 
-Although `orbit_identity` and `orbit_norope` do not use signed RoPE transport, their previously reported paired differences against full ORBIT are not reusable.
+That distinction does not invalidate the non-checkpointed 124M experiments: those experiments genuinely evaluated the $R(+\Delta)$ optimizer that is now specified in the paper and package.
 
-The corrected primary search uses Muon only. Ten deterministic 124M/900-step Muon candidates are evaluated at seed 0; the lowest-loss Muon candidate is frozen before any held-out Muon–ORBIT comparison and is then applied unchanged to both methods. ORBIT tuning outcomes do not influence the primary recipe.
+## Release evidence
 
-## Evidence hierarchy for release
+The manuscript uses the following evidence hierarchy:
 
-The final paper uses the following hierarchy:
+1. **Matched Muon–ORBIT confirmation** — the primary paired comparison at 124M/900 steps.
+2. **Mechanism ablations** — identity, no-RoPE, and diagonal controls under the matched recipe.
+3. **Crossed discovery recipes** — separates update-rule behavior from recipe sensitivity.
+4. **124M long-horizon transfer** — descriptive two-seed transfer outside the primary horizon.
+5. **Broad 124M benchmark** — exploratory context across the wider optimizer set.
 
-1. **Matched Muon–ORBIT confirmation** — the sole primary confirmatory contrast. Muon is tuned over ten deterministic candidates; its winner is frozen and applied unchanged to Muon and ORBIT on held-out paired seeds.
-2. **Mechanism ablations** — secondary full/identity/no-RoPE/diagonal analyses under that same Muon-selected frozen recipe. Their confidence intervals are reported without multiplicity adjustment.
-3. **Cross-configuration experiment** — separates update-rule behavior from recipe sensitivity.
-4. **Long-horizon and 355M cells** — descriptive transfer checks only.
-5. **Broad independently selected benchmark** — exploratory context, not an isolated optimizer ranking.
+The historical 355M checkpointed cell is not used as release evidence for the reusable package. In that exploratory run, checkpoint recomputation could update ORBIT's running Q/K statistics more than once per logical training step. The current package suppresses statistic collection during recomputation, which is the safer behavior for downstream users.
 
-The unusually large historical transfer gaps and the difference between the historical broad Muon and matched Muon cells are therefore not used as evidence for a larger ORBIT mechanism effect.
+## Reproduction boundary
 
-## Release gate
+The primary 124M experiments did not use gradient checkpointing, so the current package preserves their optimizer geometry while adding engineering hardening around persistent statistics, distributed aggregation, and checkpoint-safe EMA updates.
 
-Before release, the corrected campaign must provide machine-readable per-seed records sufficient to reconstruct every reported:
+For strict reproduction of the paper's central result, keep the following fixed:
 
-- mean validation loss;
-- paired difference;
-- confidence interval;
-- win count;
-- runtime and memory summary used in the manuscript.
+- the $R(+\Delta)$ optimizer-side transport;
+- the RoPE distance grid $\{1,2,4,8,16,32,64,128\}$;
+- uncentered Q/K second moments with $\beta=0.95$;
+- inverse-square-root preconditioning with $10^{-5}I$ regularization and condition cap 100;
+- one joint Q/K Frobenius restoration factor;
+- the matched hyperparameter recipe and paired seeds reported by the manuscript.
 
-The paper build is bound to the audited implementation digest and rejects the pre-audit evidence digest.
-
-The standalone reproduction path is split deliberately: [`experiments/matched.py`](../experiments/matched.py) generates and freezes the Muon-selected primary recipe, while [`experiments/run.py`](../experiments/run.py) executes individual training/evaluation runs. Neither script contains manuscript-generation code or JSONL campaign machinery. Corrected per-seed records will be committed under `results/corrected/` only after the audited campaign completes.
+The repository's [`experiments/`](../experiments/) directory provides a compact reproduction-oriented runner, while the full historical paper campaign remains in the paper-development repository used to generate the manuscript artifacts.
