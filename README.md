@@ -1,5 +1,7 @@
 # ORBIT
 
+<img width="1448" height="1086" alt="53da1bac-27cc-42c6-a4fe-4c999ceab145" src="https://github.com/user-attachments/assets/d51e258e-feaf-44ff-9209-7650a02d34e4" />
+
 [![CI](https://github.com/pop123-ux/ORBIT/actions/workflows/ci.yml/badge.svg)](https://github.com/pop123-ux/ORBIT/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10--3.12-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-orange)
