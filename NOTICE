@@ -1,7 +1,10 @@
 ORBIT
-Copyright 2026 Pop Alexandru.
+Copyright (c) 2026 Pop Alexandru. All rights reserved.
 
-Proposed license for the current source distribution: Apache License, Version 2.0.
-See LICENSE for the complete applicable license text. Previous MIT-licensed releases remain subject to their existing terms.
+Licensed under the Apache License, Version 2.0 (Apache-2.0).
+See the LICENSE file for the full license terms.
 
-The associated research manuscript may be distributed under a separate arXiv license. That license applies to the manuscript and does not automatically govern this software.
+Earlier versions distributed under the MIT License retain their existing license grants.
+The associated arXiv manuscript is licensed separately from the source code.
+
+Third-party components and contributions, if any, retain their respective copyrights and licenses.
